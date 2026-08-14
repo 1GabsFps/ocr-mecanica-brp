@@ -35,6 +35,12 @@ const DEFAULT_VEHICLE_DATA: VehicleData = {
   servico: 'Troca de óleo e filtro',
 };
 
+function getImageSignature(src: string): string {
+  const len = src.length;
+  const sample = src.slice(0, 80) + src.slice(-80);
+  return `${len}_${sample}`;
+}
+
 export default function App() {
   // Monitoramento de novas versões para atualização automática
   useAutoUpdate();
@@ -118,6 +124,9 @@ export default function App() {
   // Flag para evitar reprocessar quando carregamos um item do histórico
   const isHistoryRestoreRef = useRef<boolean>(false);
 
+  // Assinatura do último print processado para evitar duplicatas acidentais
+  const lastProcessedSignatureRef = useRef<{ signature: string; timestamp: number; data: VehicleData } | null>(null);
+
   // Chave do Servidor (.env) protegida
   const envApiKey = (import.meta.env.VITE_GEMINI_API_KEY as string) || '';
 
@@ -188,6 +197,21 @@ export default function App() {
         return;
       }
 
+      // Trava Anti-Duplicidade: Se o mesmo print for colado nos últimos 45s, reaproveita dados
+      const signature = getImageSignature(src);
+      const last = lastProcessedSignatureRef.current;
+
+      if (last && last.signature === signature && Date.now() - last.timestamp < 45000) {
+        if (autoCopy && last.data) {
+          performAutoCopy(last.data);
+        }
+        toast.info('Print já processado recentemente', {
+          description: 'Ficha mantida sem consumo extra de IA.',
+          duration: 2500,
+        });
+        return;
+      }
+
       // Cancela qualquer timer de edição pendente do serviço anterior
       if (serviceDebounceTimerRef.current) {
         clearTimeout(serviceDebounceTimerRef.current);
@@ -240,6 +264,13 @@ export default function App() {
           // Registra telemetria do dia
           logExtraction(isComplete, elapsedMs, result.aiModel || 'gemini-3.5-flash-lite', result.placa, result.modelo);
 
+          // Registra assinatura para proteção anti-duplicidade
+          lastProcessedSignatureRef.current = {
+            signature,
+            timestamp: Date.now(),
+            data: finalDataWithTiming,
+          };
+
           setOcrProgress({
             status: !isComplete
               ? `⚠️ Ficha com campos incompletos (${displayModel}) - Preencha para copiar`
@@ -288,6 +319,13 @@ export default function App() {
 
         // Registra telemetria do dia
         logExtraction(isLocalComplete, elapsedMs, 'tesseract-local', result.vehicleData.placa, result.vehicleData.modelo);
+
+        // Registra assinatura para proteção anti-duplicidade
+        lastProcessedSignatureRef.current = {
+          signature,
+          timestamp: Date.now(),
+          data: finalLocalWithTiming,
+        };
 
         setOcrProgress({
           status: !isLocalComplete
@@ -341,6 +379,7 @@ export default function App() {
     if (serviceDebounceTimerRef.current) {
       clearTimeout(serviceDebounceTimerRef.current);
     }
+    lastProcessedSignatureRef.current = null;
     playTrashSound();
     resetImage();
     setVehicleData(DEFAULT_VEHICLE_DATA);

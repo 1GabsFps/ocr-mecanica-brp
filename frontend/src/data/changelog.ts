@@ -12,18 +12,36 @@ export interface ChangelogRelease {
   items: ChangelogItem[];
 }
 
-export const CURRENT_APP_VERSION = '2.4.1';
+export const CURRENT_APP_VERSION = '2.4.2';
 
 export const CHANGELOG_DATA: ChangelogRelease[] = [
   {
-    version: '2.4.1',
+    version: '2.4.2',
     tag: 'Atual',
+    date: '14/08/2026',
+    title: 'Trava Anti-Duplicidade de Print e Failover Instantâneo',
+    items: [
+      {
+        title: 'Proteção Contra Prints Repetidos',
+        description: 'Se você colar o mesmo print de novo sem querer, o sistema mantém os dados na tela e copia na hora em 0ms sem precisar carregar novamente.',
+        type: 'feature',
+      },
+      {
+        title: 'Troca Instantânea de Chaves',
+        description: 'Garante que a resposta da IA continue sempre rápida (~1.6s), alternando de chave na mesma fração de segundo se houver qualquer oscilação.',
+        type: 'performance',
+      },
+    ],
+  },
+  {
+    version: '2.4.1',
+    tag: 'Anterior',
     date: '13/08/2026',
     title: 'Otimização de Desempenho e Velocidade',
     items: [
       {
         title: 'Corrida Inteligente de Chaves (Hedged Racing)',
-        description: 'Elimina travamentos de 10s a 20s acionando a chave secundária em paralelo caso a primeira demore mais de 1.5s no Google.',
+        description: 'Elimina travamentos acionando a chave secundária em paralelo caso a primeira demore no Google.',
         type: 'performance',
       },
     ],
@@ -48,29 +66,6 @@ export const CHANGELOG_DATA: ChangelogRelease[] = [
         title: 'Métricas da Oficina em Tempo Real',
         description: 'Card com total de imagens enviadas no dia pela equipe toda, taxa de acerto e tempo médio de resposta via micro-serviço Docker.',
         type: 'feature',
-      },
-    ],
-  },
-  {
-    version: '2.3.0',
-    tag: 'Anterior',
-    date: '12/08/2026',
-    title: 'Aba Extra, Hífens e Histórico em HD',
-    items: [
-      {
-        title: 'Aba Extra: Remoção de Peça',
-        description: 'Nova opção combinável com todas as demais abas (Troca de Óleo, Tuning, Retífica ou Avulso).',
-        type: 'feature',
-      },
-      {
-        title: 'Visualizador de Histórico em HD',
-        description: 'Ao restaurar serviços anteriores, o painel carrega a foto original nítida diretamente do Discord CDN com zoom e pan.',
-        type: 'improvement',
-      },
-      {
-        title: 'Preservação de Hífens nos Modelos',
-        description: 'Suporte a nomes como F-150 RAPTOR, GT-R, CX-5 e CR-V sem remoção de traços de fábrica.',
-        type: 'fix',
       },
     ],
   },
