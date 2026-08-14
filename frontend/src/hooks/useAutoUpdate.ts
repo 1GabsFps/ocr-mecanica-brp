@@ -31,7 +31,7 @@ export async function checkServerVersion(): Promise<{ isOutdated: boolean; serve
 }
 
 /**
- * Hook que monitora novas versões no servidor e força a atualização automática instantânea.
+ * Hook que monitora novas versões no servidor de forma não-destrutiva quando o operador está digitando.
  */
 export function useAutoUpdate() {
   const isUpdatingRef = useRef<boolean>(false);
@@ -48,21 +48,39 @@ export function useAutoUpdate() {
       try {
         const { isOutdated } = await checkServerVersion();
 
-        if (isOutdated && !isUpdatingRef.current) {
-          isUpdatingRef.current = true;
+        if (isOutdated && !isUpdatingRef.current && isMounted) {
+          // Verifica se o usuário está com foco em algum input ou textarea
+          const activeEl = document.activeElement;
+          const isUserTyping =
+            activeEl &&
+            (activeEl.tagName === 'INPUT' ||
+              activeEl.tagName === 'TEXTAREA' ||
+              (activeEl as HTMLElement).isContentEditable);
 
-          toast.info('🚀 Nova atualização do sistema disponível!', {
-            id: 'auto-update-system-toast',
-            description: 'Aplicando nova versão instantaneamente...',
-            duration: 1500,
-          });
-
-          // Recarrega instantaneamente (300ms) para não permitir envio em código obsoleto
-          setTimeout(() => {
-            if (isMounted) {
-              window.location.reload();
-            }
-          }, 300);
+          if (isUserTyping) {
+            // Notificação persistente não-destrutiva com botão de ação
+            toast.info('🚀 Nova atualização disponível!', {
+              id: 'auto-update-system-toast',
+              description: 'Uma nova versão do sistema está pronta para carregar.',
+              duration: Infinity,
+              action: {
+                label: 'Atualizar Agora',
+                onClick: () => window.location.reload(),
+              },
+            });
+          } else {
+            isUpdatingRef.current = true;
+            toast.info('🚀 Atualizando sistema...', {
+              id: 'auto-update-system-toast',
+              description: 'Carregando nova versão...',
+              duration: 2000,
+            });
+            setTimeout(() => {
+              if (isMounted) {
+                window.location.reload();
+              }
+            }, 1000);
+          }
         }
       } catch (_) {
       } finally {
@@ -76,7 +94,7 @@ export function useAutoUpdate() {
     // Checagem periódica a cada 30 segundos
     const interval = setInterval(checkVersion, 30 * 1000);
 
-    // Checagem imediata ao alternar janelas (Alt+Tab)
+    // Checagem imediata ao alternar janelas (Alt+Tab) com debounce
     const triggerDebouncedCheck = () => {
       if (checkDebounceTimerRef.current) {
         clearTimeout(checkDebounceTimerRef.current);
@@ -102,3 +120,4 @@ export function useAutoUpdate() {
     };
   }, []);
 }
+

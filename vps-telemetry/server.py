@@ -2,13 +2,21 @@ import json
 import sqlite3
 import time
 import os
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 DB_PATH = os.environ.get('DB_PATH', '/app/data/telemetry.db')
 
+def get_db_connection():
+    conn = sqlite3.connect(DB_PATH, timeout=5.0)
+    conn.execute('PRAGMA journal_mode = WAL;')
+    conn.execute('PRAGMA busy_timeout = 5000;')
+    conn.execute('PRAGMA synchronous = NORMAL;')
+    return conn
+
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    with sqlite3.connect(DB_PATH) as conn:
+    with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS extractions (
@@ -23,6 +31,19 @@ def init_db():
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON extractions(timestamp)')
         conn.commit()
+
+def cleanup_old_records_loop():
+    """Thread em background que expurga registros com mais de 7 dias a cada 1 hora."""
+    while True:
+        try:
+            time.sleep(3600)
+            week_ago_ms = int(time.time() * 1000) - (7 * 24 * 60 * 60 * 1000)
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM extractions WHERE timestamp < ?', (week_ago_ms,))
+                conn.commit()
+        except Exception:
+            pass
 
 class TelemetryHandler(BaseHTTPRequestHandler):
     def _send_cors_headers(self):
@@ -39,15 +60,20 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         now_ms = int(time.time() * 1000)
         day_ago_ms = now_ms - (24 * 60 * 60 * 1000)
 
-        with sqlite3.connect(DB_PATH) as conn:
+        with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT success, duration_ms, model FROM extractions
+                SELECT
+                    COUNT(*),
+                    COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0),
+                    AVG(CASE WHEN duration_ms > 0 THEN duration_ms ELSE NULL END),
+                    MIN(CASE WHEN duration_ms > 0 THEN duration_ms ELSE NULL END)
+                FROM extractions
                 WHERE timestamp >= ?
             ''', (day_ago_ms,))
-            rows = cursor.fetchall()
+            row = cursor.fetchone()
 
-        total_today = len(rows)
+        total_today = row[0] if row else 0
         if total_today == 0:
             result = {
                 "totalToday": 0,
@@ -58,11 +84,12 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 "activeModelName": "Gemini 3.5 Flash Lite"
             }
         else:
-            success_count = sum(1 for r in rows if r[0] == 1)
+            success_count = int(row[1])
             success_rate = round((success_count / total_today) * 100, 1)
-            durations = [r[1] for r in rows if r[1] > 0]
-            avg_duration_sec = round((sum(durations) / len(durations) / 1000), 1) if durations else 1.4
-            fastest_duration_sec = round((min(durations) / 1000), 1) if durations else 1.1
+            avg_ms = row[2]
+            min_ms = row[3]
+            avg_duration_sec = round(avg_ms / 1000.0, 1) if avg_ms is not None else 1.4
+            fastest_duration_sec = round(min_ms / 1000.0, 1) if min_ms is not None else 1.1
 
             result = {
                 "totalToday": total_today,
@@ -94,16 +121,12 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             placa = str(data.get('placa', ''))
             modelo = str(data.get('modelo', ''))
 
-            with sqlite3.connect(DB_PATH) as conn:
+            with get_db_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
                     INSERT INTO extractions (timestamp, success, duration_ms, model, placa, modelo)
                     VALUES (?, ?, ?, ?, ?, ?)
                 ''', (timestamp, success, duration_ms, model, placa, modelo))
-                
-                # Limpar registros com mais de 7 dias
-                week_ago_ms = int(time.time() * 1000) - (7 * 24 * 60 * 60 * 1000)
-                cursor.execute('DELETE FROM extractions WHERE timestamp < ?', (week_ago_ms,))
                 conn.commit()
 
             response_bytes = json.dumps({"ok": True}).encode('utf-8')
@@ -120,12 +143,17 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"error": str(e)}).encode('utf-8'))
 
     def log_message(self, format, *args):
-        # Silencia logs padrões para economizar I/O
+        # Silencia logs padroes para economizar I/O
         pass
 
 if __name__ == '__main__':
     init_db()
+
+    # Iniciar thread periodica de limpeza em background
+    cleanup_thread = threading.Thread(target=cleanup_old_records_loop, daemon=True)
+    cleanup_thread.start()
+
     port = int(os.environ.get('PORT', 8002))
-    server = HTTPServer(('0.0.0.0', port), TelemetryHandler)
-    print(f"MEC Telemetry Service rodando na porta {port}...")
+    server = ThreadingHTTPServer(('0.0.0.0', port), TelemetryHandler)
+    print(f"MEC Telemetry Service multithread rodando na porta {port}...")
     server.serve_forever()

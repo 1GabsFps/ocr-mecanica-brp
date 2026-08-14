@@ -26,15 +26,31 @@ export function useDailyMetrics() {
   }, []);
 
   useEffect(() => {
-    refreshMetrics();
-    const interval = setInterval(refreshMetrics, 15 * 1000); // Atualiza a cada 15 segundos
-    window.addEventListener('focus', refreshMetrics);
+    let isMounted = true;
+
+    const safeRefresh = async () => {
+      const serverMetrics = await fetchServerDailyMetrics();
+      if (!isMounted) return;
+      if (serverMetrics) {
+        setMetrics(serverMetrics);
+      } else {
+        const localRecords = loadDailyRecords();
+        if (isMounted) {
+          setMetrics(calculateDailyMetrics(localRecords));
+        }
+      }
+    };
+
+    safeRefresh();
+    const interval = setInterval(safeRefresh, 15 * 1000); // Atualiza a cada 15 segundos
+    window.addEventListener('focus', safeRefresh);
 
     return () => {
+      isMounted = false;
       clearInterval(interval);
-      window.removeEventListener('focus', refreshMetrics);
+      window.removeEventListener('focus', safeRefresh);
     };
-  }, [refreshMetrics]);
+  }, []);
 
   const logExtraction = useCallback(
     async (success: boolean, durationMs: number, model = 'gemini-3.5-flash-lite', placa?: string, modelo?: string) => {
@@ -56,3 +72,4 @@ export function useDailyMetrics() {
     refreshMetrics,
   };
 }
+

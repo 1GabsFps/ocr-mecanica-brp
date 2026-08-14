@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, memo } from 'react';
 import {
   Disc,
   CircleDot,
@@ -371,101 +371,110 @@ const RETIFICA_PRESETS: RetificaPreset[] = [
   },
 ];
 
-export const PartsSelector: React.FC<PartsSelectorProps> = ({
+function parseServiceMode(currentServico: string): ServiceMode {
+  const s = currentServico.toLowerCase();
+  if (
+    s.includes('retífica') ||
+    s.includes('retifica') ||
+    s.includes('bloco') ||
+    s.includes('pistão') ||
+    s.includes('pistao') ||
+    s.includes('biela') ||
+    s.includes('cabeçote') ||
+    s.includes('cabecote')
+  ) {
+    return 'retifica';
+  }
+  if (
+    currentServico.includes('Freio') ||
+    currentServico.includes('Pneus') ||
+    currentServico.includes('Suspensão') ||
+    currentServico.includes('Direção')
+  ) {
+    return 'tuning';
+  }
+  if (s.includes('remoção') || s.includes('remocao')) {
+    return 'extra';
+  }
+  return 'oleo';
+}
+
+function parseRemocaoPeca(currentServico: string): boolean {
+  const s = currentServico.toLowerCase();
+  return s.includes('remoção de peça') || s.includes('remocao de peca') || s.includes('remoção') || s.includes('remocao');
+}
+
+function parseTuningParts(currentServico: string): SelectedTuningParts {
+  return {
+    freio: TUNING_CATEGORIES[0].items.find((i) => currentServico.includes(i.name))?.name || null,
+    pneu: TUNING_CATEGORIES[1].items.find((i) => currentServico.includes(i.name))?.name || null,
+    suspensao: TUNING_CATEGORIES[2].items.find((i) => currentServico.includes(i.name))?.name || null,
+    direcao: TUNING_CATEGORIES[3].items.find((i) => currentServico.includes(i.name))?.name || null,
+  };
+}
+
+function parseRetificaParts(currentServico: string): SelectedRetificaParts {
+  const s = currentServico.toLowerCase();
+  let numCilindros: ValidCylinderCount = 4;
+  const match = s.match(/bloco\s+(\d+)\s+cilindros/);
+  if (match && match[1]) {
+    const parsed = parseInt(match[1], 10) as ValidCylinderCount;
+    if (VALID_CYLINDERS.includes(parsed)) {
+      numCilindros = parsed;
+    }
+  }
+
+  return {
+    bloco: s.includes('bloco'),
+    blocoCilindros: numCilindros,
+    pistoes: s.includes('pistão') || s.includes('pistao') || s.includes('pistões') || s.includes('pistoes'),
+    pistoesOrigem:
+      s.includes('pistão do cliente') ||
+      s.includes('pistao do cliente') ||
+      s.includes('(pistão do cliente)') ||
+      s.includes('(pistao do cliente)')
+        ? 'cliente'
+        : 'mec',
+    bielas: s.includes('biela') || s.includes('bielas'),
+    bielasOrigem:
+      s.includes('biela do cliente') ||
+      s.includes('bielas do cliente') ||
+      s.includes('(biela do cliente)') ||
+      s.includes('(bielas do cliente)')
+        ? 'cliente'
+        : 'mec',
+    cabecote: s.includes('cabeçote') || s.includes('cabecote'),
+    cabecoteOrigem:
+      s.includes('cabeçote do cliente') ||
+      s.includes('cabecote do cliente') ||
+      s.includes('(cabeçote do cliente)') ||
+      s.includes('(cabecote do cliente)')
+        ? 'cliente'
+        : 'mec',
+    virabrequim: s.includes('virabrequim'),
+    cilindros: s.includes('cilindro') || s.includes('cilindros'),
+    turbina: s.includes('turbina'),
+  };
+}
+
+export const PartsSelector: React.FC<PartsSelectorProps> = memo(({
   currentServico,
   onServicoChange,
 }) => {
   // Determina o modo inicial baseado no texto atual do serviço
-  const [serviceMode, setServiceMode] = useState<ServiceMode>(() => {
-    const s = currentServico.toLowerCase();
-    if (
-      s.includes('retífica') ||
-      s.includes('retifica') ||
-      s.includes('bloco') ||
-      s.includes('pistão') ||
-      s.includes('pistao') ||
-      s.includes('biela') ||
-      s.includes('cabeçote') ||
-      s.includes('cabecote')
-    ) {
-      return 'retifica';
-    }
-    if (
-      currentServico.includes('Freio') ||
-      currentServico.includes('Pneus') ||
-      currentServico.includes('Suspensão') ||
-      currentServico.includes('Direção')
-    ) {
-      return 'tuning';
-    }
-    if (s.includes('remoção') || s.includes('remocao')) {
-      return 'extra';
-    }
-    return 'oleo';
-  });
-
-  // Estado da Opção Extra: Remoção de Peça (PODE ser combinada com qualquer aba)
-  const [remocaoPeca, setRemocaoPeca] = useState<boolean>(() => {
-    const s = currentServico.toLowerCase();
-    return s.includes('remoção de peça') || s.includes('remocao de peca') || s.includes('remoção') || s.includes('remocao');
-  });
-
+  const [serviceMode, setServiceMode] = useState<ServiceMode>(() => parseServiceMode(currentServico));
+  const [remocaoPeca, setRemocaoPeca] = useState<boolean>(() => parseRemocaoPeca(currentServico));
   const [activeTuningTab, setActiveTuningTab] = useState<'freio' | 'pneu' | 'suspensao' | 'direcao'>('freio');
+  const [tuningParts, setTuningParts] = useState<SelectedTuningParts>(() => parseTuningParts(currentServico));
+  const [retificaParts, setRetificaParts] = useState<SelectedRetificaParts>(() => parseRetificaParts(currentServico));
 
-  // Estado das peças de Tuning
-  const [tuningParts, setTuningParts] = useState<SelectedTuningParts>(() => {
-    return {
-      freio: TUNING_CATEGORIES[0].items.find((i) => currentServico.includes(i.name))?.name || null,
-      pneu: TUNING_CATEGORIES[1].items.find((i) => currentServico.includes(i.name))?.name || null,
-      suspensao: TUNING_CATEGORIES[2].items.find((i) => currentServico.includes(i.name))?.name || null,
-      direcao: TUNING_CATEGORIES[3].items.find((i) => currentServico.includes(i.name))?.name || null,
-    };
-  });
-
-  // Estado das peças de Retífica com suporte a Cilindros e Origem
-  const [retificaParts, setRetificaParts] = useState<SelectedRetificaParts>(() => {
-    const s = currentServico.toLowerCase();
-    let numCilindros: ValidCylinderCount = 4;
-    const match = s.match(/bloco\s+(\d+)\s+cilindros/);
-    if (match && match[1]) {
-      const parsed = parseInt(match[1], 10) as ValidCylinderCount;
-      if (VALID_CYLINDERS.includes(parsed)) {
-        numCilindros = parsed;
-      }
-    }
-
-    return {
-      bloco: s.includes('bloco'),
-      blocoCilindros: numCilindros,
-      pistoes: s.includes('pistão') || s.includes('pistao') || s.includes('pistões') || s.includes('pistoes'),
-      pistoesOrigem:
-        s.includes('pistão do cliente') ||
-        s.includes('pistao do cliente') ||
-        s.includes('(pistão do cliente)') ||
-        s.includes('(pistao do cliente)')
-          ? 'cliente'
-          : 'mec',
-      bielas: s.includes('biela') || s.includes('bielas'),
-      bielasOrigem:
-        s.includes('biela do cliente') ||
-        s.includes('bielas do cliente') ||
-        s.includes('(biela do cliente)') ||
-        s.includes('(bielas do cliente)')
-          ? 'cliente'
-          : 'mec',
-      cabecote: s.includes('cabeçote') || s.includes('cabecote'),
-      cabecoteOrigem:
-        s.includes('cabeçote do cliente') ||
-        s.includes('cabecote do cliente') ||
-        s.includes('(cabeçote do cliente)') ||
-        s.includes('(cabecote do cliente)')
-          ? 'cliente'
-          : 'mec',
-      virabrequim: s.includes('virabrequim'),
-      cilindros: s.includes('cilindro') || s.includes('cilindros'),
-      turbina: s.includes('turbina'),
-    };
-  });
+  // SINCRONIZAÇÃO EM TEMPO REAL: Ao alterar a prop currentServico (histórico / reset / OCR)
+  useEffect(() => {
+    setServiceMode(parseServiceMode(currentServico));
+    setRemocaoPeca(parseRemocaoPeca(currentServico));
+    setTuningParts(parseTuningParts(currentServico));
+    setRetificaParts(parseRetificaParts(currentServico));
+  }, [currentServico]);
 
   // Sincroniza o texto do serviço com o modo, as peças ativas e a Remoção de Peça
   const syncServiceText = (
@@ -1533,4 +1542,7 @@ export const PartsSelector: React.FC<PartsSelectorProps> = ({
       </AnimatePresence>
     </motion.div>
   );
-};
+});
+
+PartsSelector.displayName = 'PartsSelector';
+

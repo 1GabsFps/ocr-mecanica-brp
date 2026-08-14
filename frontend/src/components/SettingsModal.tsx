@@ -3,21 +3,16 @@ import {
   X,
   Key,
   Check,
-  Zap,
-  ZapOff,
   Copy,
   ClipboardPaste,
-  ShieldCheck,
-  RotateCcw,
   Sparkles,
   Settings,
   Eye,
   EyeOff,
-  BookOpen,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { toast } from 'sonner';
-import { playToggleSound, playChipSelectSound } from '../utils/soundEffects';
+import { playToggleSound } from '../utils/soundEffects';
 import { CURRENT_APP_VERSION } from '../data/changelog';
 
 interface SettingsModalProps {

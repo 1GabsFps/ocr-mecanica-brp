@@ -121,8 +121,9 @@ export function formatModel(rawText: string): string {
   if (!rawText) return '';
   let t = cleanSymbols(rawText);
 
-  // Corrigir ambiguidades OCR no FH16 780 (ex: FHIE780, FHISTBO, FH16T80, FHIE 780, FH16 780)
-  t = t.replace(/\bFH(?:16|IE|1E|IS|1S|I6|L6|IST)?\s*(?:780|T80|7BO|TBO|BO)?\b/gi, 'FH16 780');
+  // Corrigir ambiguidades OCR no FH16 780 com exigência de padrão sem corromper outros FH (ex: FH 540)
+  t = t.replace(/\bFH(?:16|IE|1E|IS|1S|I6|L6|IST)\s*(?:780|T80|7BO|TBO|BO)\b/gi, 'FH16 780');
+  t = t.replace(/\bFH\s*(?:780|T80|7BO|TBO)\b/gi, 'FH16 780');
   t = t.replace(/\bFH(?:IE|1E|IS|1S|I6|L6)\b/gi, 'FH16');
   t = t.replace(/\b(?:T80|7BO|TBO)\b/gi, '780');
 
@@ -187,7 +188,7 @@ export async function runMechanicOcr(
 
     const worker = await getSharedWorker();
 
-    const result = await worker.recognize(preprocessed.dataUrl, {}, { blocks: true });
+    const result = await worker.recognize(preprocessed.canvas, {}, { blocks: true });
     const rawText = result.data.text || '';
     const words = extractWordsFromResult(result);
 

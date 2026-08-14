@@ -5,9 +5,7 @@ import {
   Zap,
   CheckCircle2,
   Rocket,
-  ShieldCheck,
   ChevronRight,
-  History,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { CHANGELOG_DATA, CURRENT_APP_VERSION, ChangelogItem } from '../data/changelog';

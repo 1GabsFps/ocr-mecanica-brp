@@ -6,17 +6,22 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..');
 
-const token =
-  process.env.GITHUB_TOKEN ||
-  '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';
-const owner = '1GabsFps';
-const repo = 'ocr-mecanica-brp';
+const token = process.env.GITHUB_TOKEN;
+if (!token) {
+  console.error('❌ ERRO CRÍTICO: GITHUB_TOKEN não configurado nas variáveis de ambiente.');
+  console.error('👉 Defina a variável GITHUB_TOKEN antes de executar o script de sincronização.');
+  process.exit(1);
+}
+
+const owner = process.env.GITHUB_OWNER || '1GabsFps';
+const repo = process.env.GITHUB_REPO || 'ocr-mecanica-brp';
 
 const ignoreList = [
   'node_modules',
   '.git',
   'dist',
   '.gemini',
+  '.agents',
   'backups',
   'eng.traineddata',
   'por.traineddata',
@@ -106,7 +111,7 @@ export async function syncToGitHub(commitMessage = 'Update codebase to latest ve
   console.log('⚡ Atualizando branch main...');
   await ghApi('/git/refs/heads/main', 'PATCH', {
     sha: commit.sha,
-    force: true,
+    force: false,
   });
 
   console.log(`✅ Backup no GitHub concluído com sucesso: https://github.com/${owner}/${repo}`);

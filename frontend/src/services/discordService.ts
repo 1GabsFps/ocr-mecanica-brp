@@ -6,9 +6,21 @@ import { compressImageForAi } from '../utils/imagePreprocessing';
  */
 
 export const DISCORD_WEBHOOK_URL =
+  (import.meta.env.VITE_DISCORD_WEBHOOK_URL as string) ||
   'https://canary.discord.com/api/webhooks/1537479214041800766/70lWLdEwqV736ZhRG2ugpTuMHIj8QkFW7mrUkbJGdKAid_NoVddzqfu_UeAV6sZwwfRz';
 
 export const ADMIN_DISCORD_USER_ID = '754463654233243748';
+
+// Helper de Map limitado para evitar memory leak (max 100 itens)
+function setBoundedMap<K, V>(map: Map<K, V>, key: K, value: V, maxSize = 100): void {
+  if (map.size >= maxSize) {
+    const oldestKey = map.keys().next().value;
+    if (oldestKey !== undefined) {
+      map.delete(oldestKey);
+    }
+  }
+  map.set(key, value);
+}
 
 // Camada 1: Cache do último conteúdo enviado (Deduplicação / Anti-Spam)
 const lastDiscordContentMap = new Map<string, string>();
@@ -24,21 +36,11 @@ const lastAlertTimeMap = new Map<string, number>();
 const ALERT_COOLDOWN_MS = 60000; // 1 minuto de intervalo por tipo de erro
 
 /**
- * Converte um DataURL (Base64) em Blob binário para envio multipart/form-data.
+ * Converte um DataURL (Base64) em Blob binário para envio multipart/form-data de forma nativa e assíncrona.
  */
-export function dataUrlToBlob(dataUrl: string): Blob {
-  const parts = dataUrl.split(',');
-  const mimeMatch = parts[0].match(/:(.*?);/);
-  const mime = mimeMatch ? mimeMatch[1] : 'image/webp';
-  const byteString = atob(parts[1]);
-  const arrayBuffer = new ArrayBuffer(byteString.length);
-  const uint8Array = new Uint8Array(arrayBuffer);
-
-  for (let i = 0; i < byteString.length; i++) {
-    uint8Array[i] = byteString.charCodeAt(i);
-  }
-
-  return new Blob([uint8Array], { type: mime });
+export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+  const res = await fetch(dataUrl);
+  return res.blob();
 }
 
 export interface DiscordUploadResult {
@@ -89,6 +91,10 @@ export async function sendDiscordSystemAlert(alert: {
   keySlot?: string;
   code?: number;
 }): Promise<boolean> {
+  if (!DISCORD_WEBHOOK_URL) {
+    return false;
+  }
+
   const now = Date.now();
   const lastTime = lastAlertTimeMap.get(alert.errorType) || 0;
 
@@ -96,7 +102,7 @@ export async function sendDiscordSystemAlert(alert: {
   if (now - lastTime < ALERT_COOLDOWN_MS) {
     return false;
   }
-  lastAlertTimeMap.set(alert.errorType, now);
+  setBoundedMap(lastAlertTimeMap, alert.errorType, now);
 
   const timestamp = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   const content = `🚨 <@${ADMIN_DISCORD_USER_ID}> **ALERTA DE SISTEMA - MECÂNICA BRP**\n⚠️ **Tipo de Falha:** \`${alert.errorType}\`\n🔑 **Chave / Origem:** \`${alert.keySlot || 'Pool do Servidor'}\`\n📝 **Detalhes do Erro:** \`${alert.message}\`\n🕒 **Horário:** \`${timestamp}\``;
@@ -118,28 +124,52 @@ export async function sendDiscordSystemAlert(alert: {
 }
 
 /**
- * Envia a imagem em alta resolução otimizada (WebP 1080p/2K ~200KB) para o Discord Webhook.
+ * Envia a imagem em alta resolução otimizada (WebP 1080p/2K ~200KB) para o Discord Webhook com retry em 429.
  */
 export async function uploadImageToDiscord(
   imageSrc: string,
   metadata?: DiscordPayloadMetadata
 ): Promise<DiscordUploadResult | null> {
+  if (!DISCORD_WEBHOOK_URL) {
+    return null;
+  }
+
   try {
     const compressed = await compressImageForAi(imageSrc, 1920, 0.90, 'webp');
-    const blob = dataUrlToBlob(compressed.dataUrl);
+    const blob = await dataUrlToBlob(compressed.dataUrl);
     const extension = compressed.mimeType === 'image/webp' ? 'webp' : 'jpg';
     const filename = `veiculo_${metadata?.placa || 'print'}_${Date.now()}.${extension}`;
 
-    const formData = new FormData();
-    formData.append('file', blob, filename);
+    const createFormData = () => {
+      const formData = new FormData();
+      formData.append('file', blob, filename);
+      const content = formatDiscordContent(metadata);
+      formData.append('payload_json', JSON.stringify({ content }));
+      return { formData, content };
+    };
 
-    const content = formatDiscordContent(metadata);
-    formData.append('payload_json', JSON.stringify({ content }));
+    let { formData, content } = createFormData();
 
-    const response = await fetch(`${DISCORD_WEBHOOK_URL}?wait=true`, {
+    let response = await fetch(`${DISCORD_WEBHOOK_URL}?wait=true`, {
       method: 'POST',
       body: formData,
     });
+
+    // Tratamento de Rate Limit HTTP 429 com Retry-After backoff
+    if (response.status === 429) {
+      const errData = await response.json().catch(() => ({}));
+      const retryAfterSec = parseFloat(response.headers.get('Retry-After') || '') || (errData?.retry_after ? Number(errData.retry_after) : 1);
+      const backoffMs = Math.min(Math.max(Math.round(retryAfterSec * 1000), 500), 5000);
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+
+      const retryData = createFormData();
+      formData = retryData.formData;
+      content = retryData.content;
+      response = await fetch(`${DISCORD_WEBHOOK_URL}?wait=true`, {
+        method: 'POST',
+        body: formData,
+      });
+    }
 
     if (!response.ok) {
       console.warn('Erro na resposta do Discord Webhook:', response.status, response.statusText);
@@ -152,8 +182,8 @@ export async function uploadImageToDiscord(
     if (attachment && attachment.url) {
       const messageId = data.id;
       if (messageId) {
-        lastDiscordContentMap.set(messageId, content);
-        lastDiscordPatchTimeMap.set(messageId, Date.now());
+        setBoundedMap(lastDiscordContentMap, messageId, content);
+        setBoundedMap(lastDiscordPatchTimeMap, messageId, Date.now());
       }
 
       return {
@@ -172,13 +202,13 @@ export async function uploadImageToDiscord(
 }
 
 /**
- * Edita a mensagem no Discord com Blindagem de 2 Camadas (Anti-Spam + Trailing Throttle de 5s).
+ * Edita a mensagem no Discord com Blindagem de 2 Camadas (Anti-Spam + Trailing Throttle de 5s) e backoff 429.
  */
 export async function updateDiscordMessage(
   messageId: string,
   metadata: DiscordPayloadMetadata
 ): Promise<boolean> {
-  if (!messageId) return false;
+  if (!messageId || !DISCORD_WEBHOOK_URL) return false;
 
   const newContent = formatDiscordContent(metadata);
 
@@ -202,7 +232,7 @@ export async function updateDiscordMessage(
       updateDiscordMessage(messageId, metadata);
     }, remainingCooldown);
 
-    pendingPatchTimerMap.set(messageId, timer);
+    setBoundedMap(pendingPatchTimerMap, messageId, timer);
     return true;
   }
 
@@ -212,17 +242,32 @@ export async function updateDiscordMessage(
     pendingPatchTimerMap.delete(messageId);
   }
 
-  lastDiscordPatchTimeMap.set(messageId, now);
-  lastDiscordContentMap.set(messageId, newContent);
+  setBoundedMap(lastDiscordPatchTimeMap, messageId, now);
+  setBoundedMap(lastDiscordContentMap, messageId, newContent);
 
   try {
-    const response = await fetch(`${DISCORD_WEBHOOK_URL}/messages/${messageId}`, {
+    let response = await fetch(`${DISCORD_WEBHOOK_URL}/messages/${messageId}`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ content: newContent }),
     });
+
+    if (response.status === 429) {
+      const errData = await response.json().catch(() => ({}));
+      const retryAfterSec = parseFloat(response.headers.get('Retry-After') || '') || (errData?.retry_after ? Number(errData.retry_after) : 1);
+      const backoffMs = Math.min(Math.max(Math.round(retryAfterSec * 1000), 500), 5000);
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+
+      response = await fetch(`${DISCORD_WEBHOOK_URL}/messages/${messageId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ content: newContent }),
+      });
+    }
 
     return response.ok;
   } catch (err) {

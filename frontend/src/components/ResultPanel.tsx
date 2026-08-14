@@ -23,7 +23,6 @@ interface ResultPanelProps {
   data: VehicleData;
   onDataChange: (newData: VehicleData) => void;
   onReset: () => void;
-  rawOcrText?: string;
   onOpenRawDrawer?: () => void;
   onCopyComplete?: () => void;
 }
@@ -116,7 +115,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({
   };
 
   // Bloqueio de cópia manual direta na caixa de pré-visualização
-  const handleManualCopyBlock = (e: React.UIEvent) => {
+  const handleManualCopyBlock = (e: React.SyntheticEvent) => {
     e.preventDefault();
     toast.warning('Cópia direta bloqueada!', {
       description: 'Utilize o botão "Copiar Texto" abaixo para gerar a ficha validada.',

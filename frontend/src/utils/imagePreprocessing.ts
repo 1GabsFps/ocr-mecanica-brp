@@ -66,6 +66,10 @@ export async function compressImageForAi(
 
       const base64Data = dataUrl.split(',')[1];
 
+      // Liberar memória do Canvas
+      canvas.width = 0;
+      canvas.height = 0;
+
       resolve({
         base64Data,
         mimeType,

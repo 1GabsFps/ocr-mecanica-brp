@@ -1,6 +1,5 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Toaster, toast } from 'sonner';
-import { motion, AnimatePresence } from 'framer-motion';
 import { Header } from './components/Header';
 import { DropZone } from './components/DropZone';
 import { ImageViewer } from './components/ImageViewer';
@@ -22,7 +21,6 @@ import { CURRENT_APP_VERSION } from './data/changelog';
 import {
   playSuccessChime,
   playPasteSound,
-  playToggleSound,
   playTrashSound,
 } from './utils/soundEffects';
 import { ColumnBounds, OcrProgress, OcrWord, ServiceHistoryItem, VehicleData } from './types';
@@ -63,15 +61,15 @@ export default function App() {
     return lastSeen !== CURRENT_APP_VERSION;
   });
 
-  const handleToggleAutoCopy = () => {
+  const handleToggleAutoCopy = useCallback(() => {
     setAutoCopy((prev) => {
       const next = !prev;
       localStorage.setItem('mec_auto_copy', String(next));
       return next;
     });
-  };
+  }, []);
 
-  const handleToggleAutoPaste = () => {
+  const handleToggleAutoPaste = useCallback(() => {
     setAutoPaste((prev) => {
       const next = !prev;
       localStorage.setItem('mec_auto_paste', String(next));
@@ -82,7 +80,7 @@ export default function App() {
       }
       return next;
     });
-  };
+  }, []);
 
   // Gerenciamento de Imagem com Auto-Colar no foco (Alt+Tab)
   const {
@@ -127,6 +125,10 @@ export default function App() {
   // Assinatura do último print processado para evitar duplicatas acidentais
   const lastProcessedSignatureRef = useRef<{ signature: string; timestamp: number; data: VehicleData } | null>(null);
 
+  // Identificador de Processo Ativo e AbortController para prevenir Race Condition
+  const activeProcessIdRef = useRef<number>(0);
+  const activeAbortControllerRef = useRef<AbortController | null>(null);
+
   // Chave do Servidor (.env) protegida
   const envApiKey = (import.meta.env.VITE_GEMINI_API_KEY as string) || '';
 
@@ -149,10 +151,32 @@ export default function App() {
 
   const [showRawDrawer, setShowRawDrawer] = useState<boolean>(false);
 
-  const handleSaveUserKey = (newKey: string) => {
+  const handleSaveUserKey = useCallback((newKey: string) => {
     setUserApiKey(newKey);
     localStorage.setItem('user_gemini_api_key', newKey);
-  };
+  }, []);
+
+  // Reset total
+  const handleFullReset = useCallback(() => {
+    activeProcessIdRef.current++; // Invalida qualquer resposta assíncrona de OCR em andamento
+    if (activeAbortControllerRef.current) {
+      activeAbortControllerRef.current.abort();
+      activeAbortControllerRef.current = null;
+    }
+    if (serviceDebounceTimerRef.current) {
+      clearTimeout(serviceDebounceTimerRef.current);
+    }
+    lastProcessedSignatureRef.current = null;
+    playTrashSound();
+    resetImage();
+    setVehicleData(DEFAULT_VEHICLE_DATA);
+    setColumns([]);
+    setWords([]);
+    setRawText('');
+    setIsProcessing(false);
+    setOcrProgress({ status: 'Aguardando imagem...', progress: 0, stage: 'idle' });
+    toast('Painel limpo');
+  }, [resetImage]);
 
   // Função auxiliar para copiar automaticamente para o clipboard (apenas se válido)
   const performAutoCopy = useCallback(
@@ -188,7 +212,7 @@ export default function App() {
     [autoCopy]
   );
 
-  // Execução Ultrarrápida de IA com Fallback Local (Sem travar CPU)
+  // Execução Ultrarrápida de IA com Fallback Local (Sem travar CPU e sem race condition)
   const processImageOcr = useCallback(
     async (src: string) => {
       // Se foi apenas uma restauração do histórico, não roda o OCR novamente
@@ -211,6 +235,14 @@ export default function App() {
         });
         return;
       }
+
+      // Cria novo identificador e cancela requisição anterior se existir
+      const currentProcessId = ++activeProcessIdRef.current;
+      if (activeAbortControllerRef.current) {
+        activeAbortControllerRef.current.abort();
+      }
+      const abortController = new AbortController();
+      activeAbortControllerRef.current = abortController;
 
       // Cancela qualquer timer de edição pendente do serviço anterior
       if (serviceDebounceTimerRef.current) {
@@ -237,12 +269,17 @@ export default function App() {
 
         try {
           const result = await extractWithGemini(src, activeApiKey, (_modelName, modelDisplay) => {
-            setOcrProgress({
-              status: `Processando imagem com ${modelDisplay}...`,
-              progress: 60,
-              stage: 'recognizing',
-            });
+            if (activeProcessIdRef.current === currentProcessId) {
+              setOcrProgress({
+                status: `Processando imagem com ${modelDisplay}...`,
+                progress: 60,
+                stage: 'recognizing',
+              });
+            }
           });
+
+          // GUARDA DE RACE CONDITION: Se o processo foi cancelado/resetado, aborta imediatamente
+          if (activeProcessIdRef.current !== currentProcessId) return;
 
           const elapsedMs = Date.now() - startTime;
           const isComplete = validateVehicleData(result).isValid;
@@ -283,6 +320,7 @@ export default function App() {
           setIsProcessing(false);
           return;
         } catch (geminiErr: any) {
+          if (activeProcessIdRef.current !== currentProcessId) return;
           console.warn('Falha na IA, alternando para OCR local:', geminiErr);
           setOcrProgress({
             status: 'IA indisponível, processando com OCR local...',
@@ -297,8 +335,12 @@ export default function App() {
 
       try {
         const result = await runMechanicOcr(src, (prog) => {
-          setOcrProgress(prog);
+          if (activeProcessIdRef.current === currentProcessId) {
+            setOcrProgress(prog);
+          }
         });
+
+        if (activeProcessIdRef.current !== currentProcessId) return;
 
         const elapsedMs = Date.now() - startTime;
         const isLocalComplete = validateVehicleData(result.vehicleData).isValid;
@@ -337,6 +379,7 @@ export default function App() {
           stage: 'complete',
         });
       } catch (err) {
+        if (activeProcessIdRef.current !== currentProcessId) return;
         console.error('Erro no OCR:', err);
         setOcrProgress({
           status: 'Falha no processamento local.',
@@ -345,7 +388,9 @@ export default function App() {
         });
         toast.error('Erro ao processar imagem');
       } finally {
-        setIsProcessing(false);
+        if (activeProcessIdRef.current === currentProcessId) {
+          setIsProcessing(false);
+        }
       }
     },
     [activeApiKey, addService, autoCopy, logExtraction, performAutoCopy]
@@ -359,7 +404,7 @@ export default function App() {
   }, [imageSrc, processImageOcr]);
 
   // Carregar um serviço anterior do histórico para o painel principal (usa a imagem HD do Discord)
-  const handleSelectHistoryService = (item: ServiceHistoryItem) => {
+  const handleSelectHistoryService = useCallback((item: ServiceHistoryItem) => {
     isHistoryRestoreRef.current = true;
     const bestImage = item.discordImageUrl || item.thumbnailUrl;
     if (bestImage) {
@@ -372,26 +417,10 @@ export default function App() {
     setOcrProgress({ status: 'Serviço restaurado do histórico', progress: 100, stage: 'complete' });
     setIsProcessing(false);
     toast.info('Serviço carregado do histórico', { description: `${item.vehicleData.modelo} • ${item.vehicleData.placa}` });
-  };
-
-  // Reset total
-  const handleFullReset = () => {
-    if (serviceDebounceTimerRef.current) {
-      clearTimeout(serviceDebounceTimerRef.current);
-    }
-    lastProcessedSignatureRef.current = null;
-    playTrashSound();
-    resetImage();
-    setVehicleData(DEFAULT_VEHICLE_DATA);
-    setColumns([]);
-    setWords([]);
-    setRawText('');
-    setOcrProgress({ status: 'Aguardando imagem...', progress: 0, stage: 'idle' });
-    toast('Painel limpo');
-  };
+  }, [setImageSrc]);
 
   // Altera o serviço com Debounce de 5 Segundos (Protege contra Rate Limit do Discord)
-  const handleServicoChange = (newServico: string) => {
+  const handleServicoChange = useCallback((newServico: string) => {
     setVehicleData((prev) => {
       const updated = { ...prev, servico: newServico };
       vehicleDataRef.current = updated;
@@ -405,15 +434,24 @@ export default function App() {
     serviceDebounceTimerRef.current = setTimeout(() => {
       updateCurrentServiceDetails(newServico, vehicleDataRef.current);
     }, 5000);
-  };
+  }, [updateCurrentServiceDetails]);
 
   // Quando o mecânico clica no botão "Copiar Texto", sincroniza o Discord imediatamente
-  const handleManualCopyFlush = () => {
+  const handleManualCopyFlush = useCallback(() => {
     if (serviceDebounceTimerRef.current) {
       clearTimeout(serviceDebounceTimerRef.current);
     }
     updateCurrentServiceDetails(vehicleData.servico, vehicleData);
-  };
+  }, [updateCurrentServiceDetails, vehicleData]);
+
+  const handleOpenSettings = useCallback(() => setShowSettingsModal(true), []);
+  const handleCloseSettings = useCallback(() => setShowSettingsModal(false), []);
+  const handleOpenHistory = useCallback(() => setShowHistoryDrawer(true), []);
+  const handleCloseHistory = useCallback(() => setShowHistoryDrawer(false), []);
+  const handleOpenRawDrawer = useCallback(() => setShowRawDrawer(true), []);
+  const handleCloseRawDrawer = useCallback(() => setShowRawDrawer(false), []);
+  const handleOpenChangelog = useCallback(() => setShowChangelogModal(true), []);
+  const handleCloseChangelog = useCallback(() => setShowChangelogModal(false), []);
 
   return (
     <div
@@ -429,9 +467,9 @@ export default function App() {
       <Header
         onReset={handleFullReset}
         hasImage={Boolean(imageSrc)}
-        onOpenSettings={() => setShowSettingsModal(true)}
+        onOpenSettings={handleOpenSettings}
         historyCount={history.length}
-        onOpenHistory={() => setShowHistoryDrawer(true)}
+        onOpenHistory={handleOpenHistory}
         autoCopy={autoCopy}
         autoPaste={autoPaste}
       />
@@ -478,8 +516,7 @@ export default function App() {
                     data={vehicleData}
                     onDataChange={setVehicleData}
                     onReset={handleFullReset}
-                    rawOcrText={rawText}
-                    onOpenRawDrawer={() => setShowRawDrawer(true)}
+                    onOpenRawDrawer={handleOpenRawDrawer}
                     onCopyComplete={handleManualCopyFlush}
                   />
                 </div>
@@ -500,7 +537,7 @@ export default function App() {
       {/* Drawer do Histórico de Serviços (24 horas) */}
       <ServiceHistoryDrawer
         isOpen={showHistoryDrawer}
-        onClose={() => setShowHistoryDrawer(false)}
+        onClose={handleCloseHistory}
         history={history}
         onSelectService={handleSelectHistoryService}
         onDeleteService={deleteService}
@@ -510,7 +547,7 @@ export default function App() {
       {/* Modal Flutuante de Configurações e Automações */}
       <SettingsModal
         isOpen={showSettingsModal}
-        onClose={() => setShowSettingsModal(false)}
+        onClose={handleCloseSettings}
         autoCopy={autoCopy}
         onToggleAutoCopy={handleToggleAutoCopy}
         autoPaste={autoPaste}
@@ -518,23 +555,22 @@ export default function App() {
         userKey={userApiKey}
         hasEnvKey={Boolean(envApiKey)}
         onSaveUserKey={handleSaveUserKey}
-        onOpenChangelog={() => setShowChangelogModal(true)}
+        onOpenChangelog={handleOpenChangelog}
       />
 
       {/* Modal Flutuante de Novidades e Changelog (v2.4.0) */}
       <ChangelogModal
         isOpen={showChangelogModal}
-        onClose={() => setShowChangelogModal(false)}
+        onClose={handleCloseChangelog}
       />
 
       {/* Drawer de Texto Bruto do OCR */}
       <RawTextDrawer
         isOpen={showRawDrawer}
-        onClose={() => setShowRawDrawer(false)}
+        onClose={handleCloseRawDrawer}
         rawText={rawText}
-        columns={columns}
-        words={words}
       />
     </div>
   );
 }
+

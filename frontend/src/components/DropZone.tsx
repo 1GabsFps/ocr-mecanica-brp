@@ -4,7 +4,7 @@ import { Clipboard, Upload, ShieldAlert } from 'lucide-react';
 interface DropZoneProps {
   onFileInputChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onDragOver: (e: React.DragEvent) => void;
-  onDragLeave: (e: DragEvent) => void;
+  onDragLeave: (e: React.DragEvent) => void;
   onDrop: (e: React.DragEvent) => void;
   isDragging: boolean;
   error?: string | null;

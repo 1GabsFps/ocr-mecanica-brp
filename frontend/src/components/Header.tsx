@@ -1,5 +1,5 @@
 import React from 'react';
-import { Wrench, RefreshCw, Settings, History, Sparkles } from 'lucide-react';
+import { Wrench, RefreshCw, Settings, History } from 'lucide-react';
 
 interface HeaderProps {
   onReset: () => void;

@@ -1,13 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { X, Copy, Check, FileText } from 'lucide-react';
-import { ColumnBounds, OcrWord } from '../types';
-
 interface RawTextDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   rawText: string;
-  words: OcrWord[];
-  columns: ColumnBounds[];
 }
 
 export const RawTextDrawer: React.FC<RawTextDrawerProps> = ({

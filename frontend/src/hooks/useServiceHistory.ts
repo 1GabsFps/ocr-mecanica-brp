@@ -5,6 +5,7 @@ import {
   saveHistory,
   createHistoryThumbnail,
   copyImageToClipboard,
+  MAX_HISTORY_ITEMS,
 } from '../utils/historyStorage';
 import { uploadImageToDiscord, updateDiscordMessage } from '../services/discordService';
 
@@ -50,7 +51,7 @@ export function useServiceHistory() {
       const filtered = prev.filter(
         (p) => !(p.vehicleData.placa === data.placa && p.vehicleData.modelo === data.modelo && Date.now() - p.timestamp < 30000)
       );
-      const updated = [newItem, ...filtered].slice(0, 100);
+      const updated = [newItem, ...filtered].slice(0, MAX_HISTORY_ITEMS);
       saveHistory(updated);
       return updated;
     });
@@ -86,14 +87,14 @@ export function useServiceHistory() {
     const currentId = activeItemIdRef.current;
     if (!currentId) return;
 
-    setHistory((prev) => {
-      let targetMessageId: string | undefined;
-      let targetPayload: any = null;
+    let targetMessageId: string | undefined;
+    let targetPayload: any = null;
 
+    setHistory((prev) => {
       const updated = prev.map((item) => {
         if (item.id === currentId) {
           targetMessageId = item.discordMessageId;
-          
+
           // Preserva estritamente o tempo de resposta, modelo e auditoria de chaves originais
           const originalDuration = item.vehicleData.durationMs ?? fullData.durationMs;
           const originalModel = item.vehicleData.aiModel || fullData.aiModel || 'gemini-3.5-flash-lite';
@@ -137,14 +138,13 @@ export function useServiceHistory() {
       });
 
       saveHistory(updated);
-
-      // Se já tiver o ID da mensagem no Discord, atualiza via PATCH com os valores originais intactos
-      if (targetMessageId && targetPayload) {
-        updateDiscordMessage(targetMessageId, targetPayload);
-      }
-
       return updated;
     });
+
+    // EFEITO COLATERAL PURO: Executado FORA do updater funcional do React
+    if (targetMessageId && targetPayload) {
+      updateDiscordMessage(targetMessageId, targetPayload);
+    }
   }, []);
 
   const deleteService = useCallback((id: string) => {
@@ -170,3 +170,4 @@ export function useServiceHistory() {
     copyImageToClipboard,
   };
 }
+

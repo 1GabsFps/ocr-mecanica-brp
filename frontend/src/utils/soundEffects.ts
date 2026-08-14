@@ -3,11 +3,19 @@
  * Sem arquivos pesados, sem delay de carregamento e com áudio cristalino.
  */
 
-function getAudioContext(): AudioContext | null {
+let sharedAudioContext: AudioContext | null = null;
+
+export function getSharedAudioContext(): AudioContext | null {
   try {
-    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioContextClass) return null;
-    return new AudioContextClass();
+    if (!sharedAudioContext || sharedAudioContext.state === 'closed') {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) return null;
+      sharedAudioContext = new AudioContextClass();
+    }
+    if (sharedAudioContext.state === 'suspended') {
+      sharedAudioContext.resume().catch(() => {});
+    }
+    return sharedAudioContext;
   } catch (_) {
     return null;
   }
@@ -17,7 +25,7 @@ function getAudioContext(): AudioContext | null {
  * 1. Som de Sucesso / Auto-Cópia: Chime suave de 2 tons (Plim!)
  */
 export function playSuccessChime() {
-  const ctx = getAudioContext();
+  const ctx = getSharedAudioContext();
   if (!ctx) return;
   const now = ctx.currentTime;
 
@@ -54,7 +62,7 @@ export function playSuccessChime() {
  * 2. Som de Imagem Colada (Ctrl+V / Drag): Pop mecânico rápido
  */
 export function playPasteSound() {
-  const ctx = getAudioContext();
+  const ctx = getSharedAudioContext();
   if (!ctx) return;
   const now = ctx.currentTime;
 
@@ -77,7 +85,7 @@ export function playPasteSound() {
  * 3. Som de Cópia Manual (Botão Copiar): Click digital tátil
  */
 export function playCopySound() {
-  const ctx = getAudioContext();
+  const ctx = getSharedAudioContext();
   if (!ctx) return;
   const now = ctx.currentTime;
 
@@ -100,7 +108,7 @@ export function playCopySound() {
  * 4. Som de Refinamento da IA (quando a IA confirma os dados com precisão total): Acorde harmônico suave
  */
 export function playAiRefinedSound() {
-  const ctx = getAudioContext();
+  const ctx = getSharedAudioContext();
   if (!ctx) return;
   const now = ctx.currentTime;
 
@@ -127,7 +135,7 @@ export function playAiRefinedSound() {
  * 5. Som de Seleção de Chip de Serviço: Tap amigável
  */
 export function playChipSelectSound() {
-  const ctx = getAudioContext();
+  const ctx = getSharedAudioContext();
   if (!ctx) return;
   const now = ctx.currentTime;
 
@@ -150,7 +158,7 @@ export function playChipSelectSound() {
  * 6. Som do Botão Auto-Copiar (Toggle ON / OFF): Switch digital
  */
 export function playToggleSound(isOn: boolean) {
-  const ctx = getAudioContext();
+  const ctx = getSharedAudioContext();
   if (!ctx) return;
   const now = ctx.currentTime;
 
@@ -181,7 +189,7 @@ export function playToggleSound(isOn: boolean) {
  * 7. Som de Limpar / Excluir: Swoosh suave descendente
  */
 export function playTrashSound() {
-  const ctx = getAudioContext();
+  const ctx = getSharedAudioContext();
   if (!ctx) return;
   const now = ctx.currentTime;
 
@@ -199,3 +207,4 @@ export function playTrashSound() {
   osc.start(now);
   osc.stop(now + 0.1);
 }
+

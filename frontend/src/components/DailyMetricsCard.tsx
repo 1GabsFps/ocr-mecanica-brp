@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, memo } from 'react';
 import {
   Image as ImageIcon,
   Target,
@@ -13,17 +13,24 @@ interface DailyMetricsCardProps {
 }
 
 /**
- * Hook de animação count-up: anima um número de 0 até o valor final com easing suave.
+ * Hook de animação count-up protegido com guarda contra loops inúteis (start === end ou tab em background)
  */
 function useCountUp(target: number, duration: number = 1200, decimals: number = 0): string {
-  const [value, setValue] = useState(0);
-  const prevTarget = useRef(0);
+  const [value, setValue] = useState(target);
+  const prevTarget = useRef(target);
   const rafRef = useRef<number>(0);
 
   useEffect(() => {
     const start = prevTarget.current;
     const end = target;
     prevTarget.current = target;
+
+    // GUARDA CRÍTICA: Se o valor for idêntico ou a aba estiver oculta, evita loop de requestAnimationFrame
+    if (start === end || (typeof document !== 'undefined' && document.hidden)) {
+      setValue(end);
+      return;
+    }
+
     const startTime = performance.now();
 
     const animate = (now: number) => {
@@ -46,7 +53,7 @@ function useCountUp(target: number, duration: number = 1200, decimals: number = 
   return decimals > 0 ? value.toFixed(decimals) : Math.round(value).toString();
 }
 
-export const DailyMetricsCard: React.FC<DailyMetricsCardProps> = ({ metrics }) => {
+export const DailyMetricsCard: React.FC<DailyMetricsCardProps> = memo(({ metrics }) => {
   const animatedTotal = useCountUp(metrics.totalToday, 1000);
   const animatedSuccess = useCountUp(metrics.successCount, 1000);
   const animatedRate = useCountUp(
@@ -54,12 +61,12 @@ export const DailyMetricsCard: React.FC<DailyMetricsCardProps> = ({ metrics }) =
     1200
   );
   const animatedAvg = useCountUp(
-    parseFloat(metrics.avgDurationSec) || 0,
+    metrics.avgDurationSec || 0,
     1400,
     2
   );
   const animatedFastest = useCountUp(
-    parseFloat(metrics.fastestDurationSec) || 0,
+    metrics.fastestDurationSec || 0,
     1400,
     2
   );
@@ -165,4 +172,7 @@ export const DailyMetricsCard: React.FC<DailyMetricsCardProps> = ({ metrics }) =
       </div>
     </motion.div>
   );
-};
+});
+
+DailyMetricsCard.displayName = 'DailyMetricsCard';
+

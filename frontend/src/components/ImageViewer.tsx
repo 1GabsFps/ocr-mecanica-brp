@@ -6,14 +6,11 @@ import {
   Image as ImageIcon,
   Upload,
 } from 'lucide-react';
-import { ColumnBounds, OcrWord, ZoomState } from '../types';
+import { ZoomState } from '../types';
 
 interface ImageViewerProps {
   imageSrc: string;
-  columns?: ColumnBounds[];
-  words?: OcrWord[];
   onFileInputChange?: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  isProcessing?: boolean;
 }
 
 export const ImageViewer: React.FC<ImageViewerProps> = ({
