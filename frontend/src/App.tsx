@@ -50,6 +50,10 @@ export default function App() {
   const [autoCopy, setAutoCopy] = useState<boolean>(() => {
     return localStorage.getItem('mec_auto_copy') !== 'false';
   });
+  const autoCopyRef = useRef<boolean>(autoCopy);
+  useEffect(() => {
+    autoCopyRef.current = autoCopy;
+  }, [autoCopy]);
 
   const [autoPaste, setAutoPaste] = useState<boolean>(() => {
     return localStorage.getItem('mec_auto_paste') !== 'false';
@@ -124,6 +128,7 @@ export default function App() {
 
   // Assinatura do último print processado para evitar duplicatas acidentais
   const lastProcessedSignatureRef = useRef<{ signature: string; timestamp: number; data: VehicleData } | null>(null);
+  const lastProcessedImageSrcRef = useRef<string | null>(null);
 
   // Identificador de Processo Ativo e AbortController para prevenir Race Condition
   const activeProcessIdRef = useRef<number>(0);
@@ -141,6 +146,10 @@ export default function App() {
 
   // Chave ativa prioriza a personalizada do usuário, senão usa a do servidor
   const activeApiKey = userApiKey || envApiKey;
+  const activeApiKeyRef = useRef<string>(activeApiKey);
+  useEffect(() => {
+    activeApiKeyRef.current = activeApiKey;
+  }, [activeApiKey]);
 
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [ocrProgress, setOcrProgress] = useState<OcrProgress>({
@@ -167,6 +176,7 @@ export default function App() {
       clearTimeout(serviceDebounceTimerRef.current);
     }
     lastProcessedSignatureRef.current = null;
+    lastProcessedImageSrcRef.current = null;
     playTrashSound();
     resetImage();
     setVehicleData(DEFAULT_VEHICLE_DATA);
@@ -190,7 +200,7 @@ export default function App() {
         return;
       }
 
-      if (!autoCopy) return;
+      if (!autoCopyRef.current) return;
 
       const placa = data.placa || '[Não identificado]';
       const proprietario = data.proprietario || '[Não identificado]';
@@ -209,7 +219,7 @@ export default function App() {
         console.warn('Falha no auto-copiar:', err);
       }
     },
-    [autoCopy]
+    []
   );
 
   // Execução Ultrarrápida de IA com Fallback Local (Sem travar CPU e sem race condition)
@@ -226,7 +236,7 @@ export default function App() {
       const last = lastProcessedSignatureRef.current;
 
       if (last && last.signature === signature && Date.now() - last.timestamp < 45000) {
-        if (autoCopy && last.data) {
+        if (autoCopyRef.current && last.data) {
           performAutoCopy(last.data);
         }
         toast.info('Print já processado recentemente', {
@@ -259,8 +269,10 @@ export default function App() {
       setRawText('');
       setIsProcessing(true);
 
+      const currentKey = activeApiKeyRef.current;
+
       // Se tiver chave configurada, executar a IA diretamente em ~1.5s
-      if (activeApiKey && activeApiKey.trim().length > 0) {
+      if (currentKey && currentKey.trim().length > 0) {
         setOcrProgress({
           status: 'Conectando ao Gemini 3.5 Flash Lite...',
           progress: 35,
@@ -268,7 +280,7 @@ export default function App() {
         });
 
         try {
-          const result = await extractWithGemini(src, activeApiKey, (_modelName, modelDisplay) => {
+          const result = await extractWithGemini(src, currentKey, (_modelName, modelDisplay) => {
             if (activeProcessIdRef.current === currentProcessId) {
               setOcrProgress({
                 status: `Processando imagem com ${modelDisplay}...`,
@@ -311,7 +323,7 @@ export default function App() {
           setOcrProgress({
             status: !isComplete
               ? `⚠️ Ficha com campos incompletos (${displayModel}) - Preencha para copiar`
-              : autoCopy
+              : autoCopyRef.current
               ? `✓ Concluído com ${displayModel} e copiado!`
               : `✓ Extraído com ${displayModel}!`,
             progress: 100,
@@ -372,7 +384,7 @@ export default function App() {
         setOcrProgress({
           status: !isLocalComplete
             ? '⚠️ Ficha com campos incompletos - Preencha para copiar'
-            : autoCopy
+            : autoCopyRef.current
             ? '✓ Concluído e copiado automaticamente!'
             : 'Extração concluída com sucesso!',
           progress: 100,
@@ -393,12 +405,13 @@ export default function App() {
         }
       }
     },
-    [activeApiKey, addService, autoCopy, logExtraction, performAutoCopy]
+    [addService, logExtraction, performAutoCopy]
   );
 
-  // Processa automaticamente assim que a imagem é carregada/colada (substitui na hora)
+  // Processa automaticamente APENAS quando a imagem mudar
   useEffect(() => {
-    if (imageSrc) {
+    if (imageSrc && imageSrc !== lastProcessedImageSrcRef.current) {
+      lastProcessedImageSrcRef.current = imageSrc;
       processImageOcr(imageSrc);
     }
   }, [imageSrc, processImageOcr]);
@@ -408,6 +421,7 @@ export default function App() {
     isHistoryRestoreRef.current = true;
     const bestImage = item.discordImageUrl || item.thumbnailUrl;
     if (bestImage) {
+      lastProcessedImageSrcRef.current = bestImage;
       setImageSrc(bestImage);
     }
     setVehicleData(item.vehicleData);
