@@ -10,12 +10,14 @@ export interface PreprocessingOptions {
 }
 
 /**
- * Compacta e redimensiona a imagem para envio ultrarrápido à API de IA (de ~5MB para ~40KB) em menos de 10ms.
+ * Compacta e redimensiona a imagem para envio ultrarrápido.
+ * format: 'jpeg' (padrão, 100% compatível com Gemini) ou 'webp' (mais leve, para Discord).
  */
 export async function compressImageForAi(
   imageSource: HTMLImageElement | string,
   maxDimension = 1600,
-  quality = 0.95
+  quality = 0.95,
+  format: 'jpeg' | 'webp' = 'jpeg'
 ): Promise<{ base64Data: string; mimeType: string; dataUrl: string }> {
   return new Promise((resolve, reject) => {
     const process = (img: HTMLImageElement) => {
@@ -45,12 +47,20 @@ export async function compressImageForAi(
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(img, 0, 0, width, height);
 
-      // Codificação moderna WebP com fallback (35% mais leve mantendo 100% dos pixels HD de 1600px)
-      let dataUrl = canvas.toDataURL('image/webp', 0.92);
-      let mimeType = 'image/webp';
+      let dataUrl: string;
+      let mimeType: string;
 
-      if (!dataUrl.startsWith('data:image/webp')) {
-        dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+      if (format === 'webp') {
+        dataUrl = canvas.toDataURL('image/webp', quality);
+        mimeType = 'image/webp';
+        // Fallback se o navegador não suportar WebP
+        if (!dataUrl.startsWith('data:image/webp')) {
+          dataUrl = canvas.toDataURL('image/jpeg', quality);
+          mimeType = 'image/jpeg';
+        }
+      } else {
+        // JPEG: 100% compatível com todas as APIs (Gemini, OpenAI, etc.)
+        dataUrl = canvas.toDataURL('image/jpeg', quality);
         mimeType = 'image/jpeg';
       }
 

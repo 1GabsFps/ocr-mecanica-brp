@@ -69,8 +69,8 @@ export async function uploadImageToDiscord(
   metadata?: DiscordPayloadMetadata
 ): Promise<DiscordUploadResult | null> {
   try {
-    // Converte para WebP em resolução Full-HD / 2K de alta qualidade (rápido e leve)
-    const compressed = await compressImageForAi(imageSrc, 1920, 0.90);
+    // Converte para WebP em resolução Full-HD / 2K de alta qualidade (rápido e leve para Discord)
+    const compressed = await compressImageForAi(imageSrc, 1920, 0.90, 'webp');
     const blob = dataUrlToBlob(compressed.dataUrl);
     const extension = compressed.mimeType === 'image/webp' ? 'webp' : 'jpg';
     const filename = `veiculo_${metadata?.placa || 'print'}_${Date.now()}.${extension}`;
