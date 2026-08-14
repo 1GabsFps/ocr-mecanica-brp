@@ -1,12 +1,14 @@
 import { compressImageForAi } from '../utils/imagePreprocessing';
 
 /**
- * Serviço de Integração com Discord Webhook para armazenamento de imagens em alta resolução
- * e sincronização dinâmica com edição de mensagens (PATCH) e Blindagem Anti-Rate Limit de 2 Camadas.
+ * Serviço de Integração com Discord Webhook para armazenamento de imagens em alta resolução,
+ * sincronização dinâmica com edição de mensagens (PATCH), auditoria técnica detalhada e Alertas de B.O.
  */
 
 export const DISCORD_WEBHOOK_URL =
   'https://canary.discord.com/api/webhooks/1537479214041800766/70lWLdEwqV736ZhRG2ugpTuMHIj8QkFW7mrUkbJGdKAid_NoVddzqfu_UeAV6sZwwfRz';
+
+export const ADMIN_DISCORD_USER_ID = '754463654233243748';
 
 // Camada 1: Cache do último conteúdo enviado (Deduplicação / Anti-Spam)
 const lastDiscordContentMap = new Map<string, string>();
@@ -16,6 +18,10 @@ const lastDiscordPatchTimeMap = new Map<string, number>();
 const pendingPatchTimerMap = new Map<string, ReturnType<typeof setTimeout>>();
 
 const DISCORD_PATCH_COOLDOWN_MS = 5000; // 5 Segundos estritos
+
+// Cooldown de Alertas de B.O. (impede flood de menções repetidas em caso de instabilidade)
+const lastAlertTimeMap = new Map<string, number>();
+const ALERT_COOLDOWN_MS = 60000; // 1 minuto de intervalo por tipo de erro
 
 /**
  * Converte um DataURL (Base64) em Blob binário para envio multipart/form-data.
@@ -49,6 +55,9 @@ export interface DiscordPayloadMetadata {
   servico?: string;
   aiModel?: string;
   durationMs?: number;
+  keySlot?: string;
+  hedged?: boolean;
+  missingFields?: string[];
 }
 
 export function formatDiscordContent(metadata?: DiscordPayloadMetadata): string {
@@ -56,20 +65,66 @@ export function formatDiscordContent(metadata?: DiscordPayloadMetadata): string 
   const durationLabel = metadata?.durationMs
     ? `\`${(metadata.durationMs / 1000).toFixed(2)}s\` (${metadata.durationMs}ms)`
     : '`~1.4s`';
+  const keyLabel = metadata?.keySlot ? `\`${metadata.keySlot}\`` : '`Chave #1 (Principal)`';
 
-  return `🚗 **Registro de Ficha - Mecânica BRP**\n**Veículo:** \`${metadata?.modelo || 'Não informado'}\`\n**Placa:** \`${metadata?.placa || 'Não informado'}\`\n**Proprietário:** \`${metadata?.proprietario || 'Não informado'}\`\n**Serviço:** \`${metadata?.servico || 'Não informado'}\`\n**IA Utilizada:** ${modelLabel}\n**Tempo de Resposta:** ${durationLabel}`;
+  let hedgeLine = '';
+  if (metadata?.hedged) {
+    hedgeLine = '\n⚡ **Hedge:** `Acionado (Chave Reserva / Salva-Vidas)`';
+  }
+
+  let statusLine = '';
+  if (metadata?.missingFields && metadata.missingFields.length > 0) {
+    statusLine = `\n⚠️ **Status:** \`Incompleto (Faltando: ${metadata.missingFields.join(', ')})\``;
+  }
+
+  return `🚗 **Registro de Ficha - Mecânica BRP**\n**Veículo:** \`${metadata?.modelo || 'Não informado'}\`\n**Placa:** \`${metadata?.placa || 'Não informado'}\`\n**Proprietário:** \`${metadata?.proprietario || 'Não informado'}\`\n**Serviço:** \`${metadata?.servico || 'Não informado'}\`\n**IA Utilizada:** ${modelLabel}\n**Slot da Chave:** ${keyLabel}${hedgeLine}${statusLine}\n**Tempo de Resposta:** ${durationLabel}`;
 }
 
 /**
- * Envia a imagem em alta resolução otimizada (WebP 1080p/2K ~200KB em vez de 8MB) para o Discord Webhook.
- * Reduz o tempo de upload no Discord de 15s para 0.2s, mantendo 100% da nitidez.
+ * Envia um Alerta Crítico no Discord marcando o administrador (<@ID>) caso ocorra um erro severo / B.O.
+ */
+export async function sendDiscordSystemAlert(alert: {
+  errorType: string;
+  message: string;
+  keySlot?: string;
+  code?: number;
+}): Promise<boolean> {
+  const now = Date.now();
+  const lastTime = lastAlertTimeMap.get(alert.errorType) || 0;
+
+  // Anti-flood: evita spammar a menção do usuário em caso de muitos erros seguidos
+  if (now - lastTime < ALERT_COOLDOWN_MS) {
+    return false;
+  }
+  lastAlertTimeMap.set(alert.errorType, now);
+
+  const timestamp = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  const content = `🚨 <@${ADMIN_DISCORD_USER_ID}> **ALERTA DE SISTEMA - MECÂNICA BRP**\n⚠️ **Tipo de Falha:** \`${alert.errorType}\`\n🔑 **Chave / Origem:** \`${alert.keySlot || 'Pool do Servidor'}\`\n📝 **Detalhes do Erro:** \`${alert.message}\`\n🕒 **Horário:** \`${timestamp}\``;
+
+  try {
+    const response = await fetch(DISCORD_WEBHOOK_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ content }),
+    });
+
+    return response.ok;
+  } catch (err) {
+    console.warn('Falha ao enviar alerta de B.O. para o Discord:', err);
+    return false;
+  }
+}
+
+/**
+ * Envia a imagem em alta resolução otimizada (WebP 1080p/2K ~200KB) para o Discord Webhook.
  */
 export async function uploadImageToDiscord(
   imageSrc: string,
   metadata?: DiscordPayloadMetadata
 ): Promise<DiscordUploadResult | null> {
   try {
-    // Converte para WebP em resolução Full-HD / 2K de alta qualidade (rápido e leve para Discord)
     const compressed = await compressImageForAi(imageSrc, 1920, 0.90, 'webp');
     const blob = dataUrlToBlob(compressed.dataUrl);
     const extension = compressed.mimeType === 'image/webp' ? 'webp' : 'jpg';
@@ -118,7 +173,6 @@ export async function uploadImageToDiscord(
 
 /**
  * Edita a mensagem no Discord com Blindagem de 2 Camadas (Anti-Spam + Trailing Throttle de 5s).
- * Imune a cliques repetidos, spam de cópia e rate limits.
  */
 export async function updateDiscordMessage(
   messageId: string,
@@ -128,12 +182,10 @@ export async function updateDiscordMessage(
 
   const newContent = formatDiscordContent(metadata);
 
-  // CAMADA 1: Deduplicação de Conteúdo (Se o texto for idêntico ao já postado, descarta requisição)
   if (lastDiscordContentMap.get(messageId) === newContent) {
     return true;
   }
 
-  // CAMADA 2: Trava de Cooldown de 5 Segundos
   const now = Date.now();
   const lastPatchTime = lastDiscordPatchTimeMap.get(messageId) || 0;
   const elapsedSinceLastPatch = now - lastPatchTime;

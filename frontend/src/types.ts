@@ -32,6 +32,9 @@ export interface VehicleData {
   servico: string;
   aiModel?: string; // Ex: 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'tesseract-local'
   durationMs?: number; // Tempo de processamento em ms
+  keySlot?: string; // Ex: 'Chave #1 (Principal)', 'Chave #2 (Reserva)'
+  hedged?: boolean; // Se a chave reserva foi acionada para salvar a requisição
+  missingFields?: string[]; // Campos que a IA não conseguiu identificar
   cor?: string;
   fipe?: string;
   ipva?: string;

@@ -1,6 +1,7 @@
 import { VehicleData } from '../types';
 import { formatPlate, formatOwner, formatModel } from './ocrService';
 import { compressImageForAi } from '../utils/imagePreprocessing';
+import { sendDiscordSystemAlert } from './discordService';
 
 /**
  * Modelos com prioridade absoluta:
@@ -82,7 +83,8 @@ async function executeGeminiRequest(
   key: string,
   model: string,
   compressed: { mimeType: string; base64Data: string },
-  signal: AbortSignal
+  signal: AbortSignal,
+  keySlotName?: string
 ): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
 
@@ -117,6 +119,24 @@ async function executeGeminiRequest(
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
     const message = errorData?.error?.message || `Erro ${response.status}: ${response.statusText}`;
+
+    // Alerta de B.O. imediato no Discord se bater Cota 429 ou Chave Inválida
+    if (response.status === 429) {
+      sendDiscordSystemAlert({
+        errorType: 'Cota de Requisições Atingida (Rate Limit 429)',
+        keySlot: keySlotName || 'Chave do Pool',
+        message: 'A cota por minuto/dia desta chave foi atingida. Alternando para a reserva.',
+        code: 429,
+      });
+    } else if (response.status === 400 || response.status === 403) {
+      sendDiscordSystemAlert({
+        errorType: `Erro de Autenticação (${response.status})`,
+        keySlot: keySlotName || 'Chave do Pool',
+        message,
+        code: response.status,
+      });
+    }
+
     throw new Error(message);
   }
 
@@ -126,7 +146,8 @@ async function executeGeminiRequest(
 }
 
 /**
- * Extração de alta velocidade com Hedged Racing (Corrida de Chaves com Aceleração a 1.5s)
+ * Extração de alta velocidade com Hedged Racing (Corrida de Chaves com Aceleração a 2.5s)
+ * e Auditoria Técnica de Slots de Chave.
  */
 export async function extractWithGemini(
   imageDataUrl: string,
@@ -138,7 +159,7 @@ export async function extractWithGemini(
     throw new Error('Chave de API não configurada.');
   }
 
-  // 1. Redimensionar e pré-processar em Ultra-HD (1600px, 95% de qualidade em JPEG)
+  // 1. Redimensionar e pré-processar em Ultra-HD (1600px, 95% de qualidade em JPEG 100% estável)
   const compressed = await compressImageForAi(imageDataUrl, 1600, 0.95, 'jpeg');
 
   onModelAttempt?.(PRIMARY_MODEL, 'Gemini 3.5 Flash Lite');
@@ -148,9 +169,9 @@ export async function extractWithGemini(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
     try {
-      const raw = await executeGeminiRequest(keys[0], PRIMARY_MODEL, compressed, controller.signal);
+      const raw = await executeGeminiRequest(keys[0], PRIMARY_MODEL, compressed, controller.signal, 'Chave Única');
       clearTimeout(timer);
-      return parseAndFormatResponse(raw, 'gemini-3.5-flash-lite');
+      return parseAndFormatResponse(raw, 'gemini-3.5-flash-lite', 'Chave Única (Personalizada)', false);
     } catch (err: any) {
       clearTimeout(timer);
       throw err;
@@ -160,8 +181,12 @@ export async function extractWithGemini(
   // CORRIDA INTELIGENTE DE CHAVES (Hedged Racing Calibrado para Latência de 2.5s):
   // Dispara a Chave 1. Se não responder em 2500ms (dando folga para conexões distantes), dispara a Chave 2 em paralelo.
   // A mais rápida entrega o resultado na hora e cancela a chave lenta!
-  const key1 = keys[keyRotationIndex % keys.length];
-  const key2 = keys[(keyRotationIndex + 1) % keys.length];
+  const idx1 = keyRotationIndex % keys.length;
+  const idx2 = (keyRotationIndex + 1) % keys.length;
+  const key1 = keys[idx1];
+  const key2 = keys[idx2];
+  const slotName1 = `Chave #${idx1 + 1} (Principal)`;
+  const slotName2 = `Chave #${idx2 + 1} (Reserva/Hedge)`;
 
   const ctrl1 = new AbortController();
   const ctrl2 = new AbortController();
@@ -169,13 +194,17 @@ export async function extractWithGemini(
   let globalTimeout: ReturnType<typeof setTimeout>;
 
   try {
-    const p1 = executeGeminiRequest(key1, PRIMARY_MODEL, compressed, ctrl1.signal);
+    const p1 = executeGeminiRequest(key1, PRIMARY_MODEL, compressed, ctrl1.signal, slotName1).then((raw) => ({
+      raw,
+      slot: slotName1,
+      hedged: false,
+    }));
 
-    const hedgedP2 = new Promise<string>((resolve, reject) => {
+    const hedgedP2 = new Promise<{ raw: string; slot: string; hedged: boolean }>((resolve, reject) => {
       const hedgeTimer = setTimeout(async () => {
         try {
-          const raw2 = await executeGeminiRequest(key2, PRIMARY_MODEL, compressed, ctrl2.signal);
-          resolve(raw2);
+          const raw2 = await executeGeminiRequest(key2, PRIMARY_MODEL, compressed, ctrl2.signal, slotName2);
+          resolve({ raw: raw2, slot: slotName2, hedged: true });
         } catch (e) {
           reject(e);
         }
@@ -193,7 +222,7 @@ export async function extractWithGemini(
       }, 9000);
     });
 
-    const fastestRaw = await Promise.race([
+    const winner = await Promise.race([
       p1.then((r) => {
         ctrl2.abort();
         keyRotationIndex = (keyRotationIndex + 1) % keys.length;
@@ -208,7 +237,7 @@ export async function extractWithGemini(
     ]);
 
     clearTimeout(globalTimeout!);
-    return parseAndFormatResponse(fastestRaw, 'gemini-3.5-flash-lite');
+    return parseAndFormatResponse(winner.raw, 'gemini-3.5-flash-lite', winner.slot, winner.hedged);
   } catch (err: any) {
     clearTimeout(globalTimeout!);
     ctrl1.abort();
@@ -217,16 +246,25 @@ export async function extractWithGemini(
 
     // Fallback de emergência caso haja indisponibilidade global
     for (const model of FALLBACK_MODELS) {
-      for (const k of keys) {
+      for (let i = 0; i < keys.length; i++) {
+        const k = keys[i];
+        const slot = `Chave #${i + 1} (Fallback)`;
         try {
           const c = new AbortController();
           const t = setTimeout(() => c.abort(), 4000);
-          const raw = await executeGeminiRequest(k, model, compressed, c.signal);
+          const raw = await executeGeminiRequest(k, model, compressed, c.signal, slot);
           clearTimeout(t);
-          return parseAndFormatResponse(raw, model);
+          return parseAndFormatResponse(raw, model, slot, false);
         } catch (_) {}
       }
     }
+
+    // Se falhou totalmente, dispara Alerta de B.O. Crítico no Discord
+    sendDiscordSystemAlert({
+      errorType: 'Falha Total na Conexão com a IA (Fallback Local Necessário)',
+      keySlot: 'Todas as Chaves',
+      message: err.message || 'Todas as tentativas de conexão com a API do Gemini falharam.',
+    });
 
     throw err || new Error('Falha ao conectar com os servidores de IA.');
   }
@@ -235,7 +273,12 @@ export async function extractWithGemini(
 /**
  * Trata e normaliza a resposta JSON estruturada
  */
-function parseAndFormatResponse(rawContent: string, aiModel: string): VehicleData {
+function parseAndFormatResponse(
+  rawContent: string,
+  aiModel: string,
+  keySlot?: string,
+  hedged?: boolean
+): VehicleData {
   let parsed: any = {};
 
   try {
@@ -292,12 +335,21 @@ function parseAndFormatResponse(rawContent: string, aiModel: string): VehicleDat
   const modeloFormatado = formatModel(rawMod);
   const servicoFormatado = rawServ || 'Troca de óleo e filtro';
 
+  // Identifica campos faltantes para auditoria
+  const missingFields: string[] = [];
+  if (!placaFormatada) missingFields.push('Placa');
+  if (!proprietarioFormatado) missingFields.push('Proprietário');
+  if (!modeloFormatado) missingFields.push('Modelo');
+
   return {
     placa: placaFormatada,
     proprietario: proprietarioFormatado,
     modelo: modeloFormatado,
     servico: servicoFormatado,
     aiModel,
+    keySlot,
+    hedged,
+    missingFields: missingFields.length > 0 ? missingFields : undefined,
     rawText: rawContent,
   };
 }

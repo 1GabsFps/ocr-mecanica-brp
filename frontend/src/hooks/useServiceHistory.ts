@@ -94,9 +94,12 @@ export function useServiceHistory() {
         if (item.id === currentId) {
           targetMessageId = item.discordMessageId;
           
-          // Preserva estritamente o tempo de resposta e modelo originais da extração da IA
+          // Preserva estritamente o tempo de resposta, modelo e auditoria de chaves originais
           const originalDuration = item.vehicleData.durationMs ?? fullData.durationMs;
           const originalModel = item.vehicleData.aiModel || fullData.aiModel || 'gemini-3.5-flash-lite';
+          const originalKeySlot = item.vehicleData.keySlot || fullData.keySlot;
+          const originalHedged = item.vehicleData.hedged ?? fullData.hedged;
+          const originalMissing = item.vehicleData.missingFields || fullData.missingFields;
 
           const updatedVehicle: VehicleData = {
             ...item.vehicleData,
@@ -104,6 +107,9 @@ export function useServiceHistory() {
             servico: newServico,
             durationMs: originalDuration,
             aiModel: originalModel,
+            keySlot: originalKeySlot,
+            hedged: originalHedged,
+            missingFields: originalMissing,
           };
           const placa = updatedVehicle.placa || '[Sem Placa]';
           const proprietario = updatedVehicle.proprietario || '[Sem Nome]';
@@ -116,6 +122,9 @@ export function useServiceHistory() {
             servico: newServico,
             aiModel: originalModel,
             durationMs: originalDuration,
+            keySlot: originalKeySlot,
+            hedged: originalHedged,
+            missingFields: originalMissing,
           };
 
           return {
