@@ -12,12 +12,35 @@ export interface ChangelogRelease {
   items: ChangelogItem[];
 }
 
-export const CURRENT_APP_VERSION = '2.4.2';
+export const CURRENT_APP_VERSION = '2.5.0';
 
 export const CHANGELOG_DATA: ChangelogRelease[] = [
   {
-    version: '2.4.2',
+    version: '2.5.0',
     tag: 'Atual',
+    date: '14/08/2026',
+    title: 'Contingência Multimodal Cloudflare Llama 3.2 Vision e Resiliência Total',
+    items: [
+      {
+        title: 'Nova IA de Contingência (Cloudflare Llama 3.2 Vision)',
+        description: 'Adicionada uma segunda inteligência artificial completa da Meta/Cloudflare que assume automaticamente se o Google passar por instabilidades.',
+        type: 'feature',
+      },
+      {
+        title: 'Remoção do OCR Local Antigo',
+        description: 'Substituição completa do motor local por visão computacional de IA de ponta, tornando a aplicação mais leve e muito mais precisa.',
+        type: 'improvement',
+      },
+      {
+        title: 'Tempo de Espera Adaptativo',
+        description: 'Tolerância ampliada para conexões lentas ou horários de pico, garantindo que o operador sempre receba a ficha completa sem interrupções.',
+        type: 'performance',
+      },
+    ],
+  },
+  {
+    version: '2.4.2',
+    tag: 'Anterior',
     date: '14/08/2026',
     title: 'Trava Anti-Duplicidade de Print e Failover Instantâneo',
     items: [

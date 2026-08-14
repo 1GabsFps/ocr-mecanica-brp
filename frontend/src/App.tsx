@@ -15,8 +15,8 @@ import { useClipboardImage } from './hooks/useClipboardImage';
 import { useServiceHistory } from './hooks/useServiceHistory';
 import { useAutoUpdate } from './hooks/useAutoUpdate';
 import { useDailyMetrics } from './hooks/useDailyMetrics';
-import { runMechanicOcr } from './services/ocrService';
 import { extractWithGemini } from './services/geminiService';
+import { extractWithCloudflare } from './services/cloudflareVisionService';
 import { CURRENT_APP_VERSION } from './data/changelog';
 import {
   playSuccessChime,
@@ -333,72 +333,82 @@ export default function App() {
           return;
         } catch (geminiErr: any) {
           if (activeProcessIdRef.current !== currentProcessId) return;
-          console.warn('Falha na IA, alternando para OCR local:', geminiErr);
+          console.warn('Gemini indisponível, acionando contingência Cloudflare Llama 3.2 Vision:', geminiErr);
           setOcrProgress({
-            status: 'IA indisponível, processando com OCR local...',
+            status: 'Alternando para contingência Cloudflare Llama 3.2 Vision...',
             progress: 50,
-            stage: 'loading_worker',
+            stage: 'recognizing',
           });
         }
       }
 
-      // OCR Local (Tesseract) como Fallback
-      setOcrProgress({ status: 'Processando com OCR local...', progress: 60, stage: 'recognizing' });
-
+      // Fallback de Contingência Total: Cloudflare Workers AI (Llama 3.2 11B Vision)
       try {
-        const result = await runMechanicOcr(src, (prog) => {
+        setOcrProgress({
+          status: 'Processando com Cloudflare Llama 3.2 Vision...',
+          progress: 60,
+          stage: 'recognizing',
+        });
+
+        const result = await extractWithCloudflare(src, (_modelName, modelDisplay) => {
           if (activeProcessIdRef.current === currentProcessId) {
-            setOcrProgress(prog);
+            setOcrProgress({
+              status: `Processando imagem com ${modelDisplay}...`,
+              progress: 75,
+              stage: 'recognizing',
+            });
           }
         });
 
         if (activeProcessIdRef.current !== currentProcessId) return;
 
         const elapsedMs = Date.now() - startTime;
-        const isLocalComplete = validateVehicleData(result.vehicleData).isValid;
+        const isComplete = validateVehicleData(result).isValid;
+        const displayModel = 'Cloudflare Llama 3.2 Vision';
 
-        const finalLocalWithTiming: VehicleData = {
-          ...result.vehicleData,
+        const finalDataWithTiming: VehicleData = {
+          ...result,
           durationMs: elapsedMs,
-          aiModel: 'tesseract-local',
         };
 
-        setVehicleData(finalLocalWithTiming);
-        setColumns(result.columns);
-        setWords(result.words);
-        setRawText(result.rawText);
+        setVehicleData(finalDataWithTiming);
+        setColumns([]);
+        setWords([]);
+        setRawText(result.rawText || '');
 
-        addService(finalLocalWithTiming, src);
-        await performAutoCopy(result.vehicleData);
+        addService(finalDataWithTiming, src);
+        await performAutoCopy(result);
 
         // Registra telemetria do dia
-        logExtraction(isLocalComplete, elapsedMs, 'tesseract-local', result.vehicleData.placa, result.vehicleData.modelo);
+        logExtraction(isComplete, elapsedMs, 'cloudflare-llama-3.2-11b', result.placa, result.modelo);
 
         // Registra assinatura para proteção anti-duplicidade
         lastProcessedSignatureRef.current = {
           signature,
           timestamp: Date.now(),
-          data: finalLocalWithTiming,
+          data: finalDataWithTiming,
         };
 
         setOcrProgress({
-          status: !isLocalComplete
-            ? '⚠️ Ficha com campos incompletos - Preencha para copiar'
+          status: !isComplete
+            ? `⚠️ Ficha com campos incompletos (${displayModel}) - Preencha para copiar`
             : autoCopyRef.current
-            ? '✓ Concluído e copiado automaticamente!'
-            : 'Extração concluída com sucesso!',
+            ? `✓ Concluído com ${displayModel} e copiado!`
+            : `✓ Extraído com ${displayModel}!`,
           progress: 100,
           stage: 'complete',
         });
-      } catch (err) {
+        setIsProcessing(false);
+        return;
+      } catch (err: any) {
         if (activeProcessIdRef.current !== currentProcessId) return;
-        console.error('Erro no OCR:', err);
+        console.error('Erro na contingência Cloudflare Vision:', err);
         setOcrProgress({
-          status: 'Falha no processamento local.',
+          status: 'Falha na conexão com os servidores de IA.',
           progress: 0,
           stage: 'error',
         });
-        toast.error('Erro ao processar imagem');
+        toast.error('Erro ao processar imagem com IA');
       } finally {
         if (activeProcessIdRef.current === currentProcessId) {
           setIsProcessing(false);
