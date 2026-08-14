@@ -138,15 +138,15 @@ export async function extractWithGemini(
     throw new Error('Chave de API não configurada.');
   }
 
-  // 1. Redimensionar e pré-processar em Ultra-HD (1600px, 95% de qualidade)
-  const compressed = await compressImageForAi(imageDataUrl, 1600, 0.95);
+  // 1. Redimensionar e pré-processar em Ultra-HD (1600px, 95% de qualidade em JPEG)
+  const compressed = await compressImageForAi(imageDataUrl, 1600, 0.95, 'jpeg');
 
   onModelAttempt?.(PRIMARY_MODEL, 'Gemini 3.5 Flash Lite');
 
   // Se houver apenas 1 chave, executa chamada direta simples
   if (keys.length === 1) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5500);
+    const timer = setTimeout(() => controller.abort(), 8000);
     try {
       const raw = await executeGeminiRequest(keys[0], PRIMARY_MODEL, compressed, controller.signal);
       clearTimeout(timer);
@@ -157,9 +157,9 @@ export async function extractWithGemini(
     }
   }
 
-  // CORRIDA INTELIGENTE DE CHAVES (Hedged Racing com 1.5s):
-  // Dispara a Chave 1. Se não responder em 1500ms, dispara a Chave 2 em paralelo.
-  // A mais rápida entrega o resultado na hora (~1.6s) e cancela a chave lenta!
+  // CORRIDA INTELIGENTE DE CHAVES (Hedged Racing Calibrado para Latência de 2.5s):
+  // Dispara a Chave 1. Se não responder em 2500ms (dando folga para conexões distantes), dispara a Chave 2 em paralelo.
+  // A mais rápida entrega o resultado na hora e cancela a chave lenta!
   const key1 = keys[keyRotationIndex % keys.length];
   const key2 = keys[(keyRotationIndex + 1) % keys.length];
 
@@ -179,9 +179,9 @@ export async function extractWithGemini(
         } catch (e) {
           reject(e);
         }
-      }, 1500);
+      }, 2500);
 
-      // Se p1 resolver antes dos 1500ms, cancela o hedgeTimer
+      // Se p1 resolver antes dos 2500ms, cancela o hedgeTimer
       p1.then(() => clearTimeout(hedgeTimer)).catch(() => clearTimeout(hedgeTimer));
     });
 
@@ -190,7 +190,7 @@ export async function extractWithGemini(
         ctrl1.abort();
         ctrl2.abort();
         reject(new Error('Tempo limite de requisição excedido'));
-      }, 6500);
+      }, 9000);
     });
 
     const fastestRaw = await Promise.race([
