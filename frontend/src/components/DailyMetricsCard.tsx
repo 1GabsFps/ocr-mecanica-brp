@@ -1,11 +1,9 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Image as ImageIcon,
   Target,
   Zap,
   Activity,
-  Sparkles,
-  ShieldCheck,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { DailyMetricsSummary } from '../utils/dailyStatsStorage';
@@ -14,7 +12,58 @@ interface DailyMetricsCardProps {
   metrics: DailyMetricsSummary;
 }
 
+/**
+ * Hook de animação count-up: anima um número de 0 até o valor final com easing suave.
+ */
+function useCountUp(target: number, duration: number = 1200, decimals: number = 0): string {
+  const [value, setValue] = useState(0);
+  const prevTarget = useRef(0);
+  const rafRef = useRef<number>(0);
+
+  useEffect(() => {
+    const start = prevTarget.current;
+    const end = target;
+    prevTarget.current = target;
+    const startTime = performance.now();
+
+    const animate = (now: number) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      // Easing: easeOutExpo (desacelera suavemente)
+      const eased = progress === 1 ? 1 : 1 - Math.pow(2, -10 * progress);
+      const current = start + (end - start) * eased;
+      setValue(current);
+
+      if (progress < 1) {
+        rafRef.current = requestAnimationFrame(animate);
+      }
+    };
+
+    rafRef.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [target, duration]);
+
+  return decimals > 0 ? value.toFixed(decimals) : Math.round(value).toString();
+}
+
 export const DailyMetricsCard: React.FC<DailyMetricsCardProps> = ({ metrics }) => {
+  const animatedTotal = useCountUp(metrics.totalToday, 1000);
+  const animatedSuccess = useCountUp(metrics.successCount, 1000);
+  const animatedRate = useCountUp(
+    metrics.totalToday > 0 ? metrics.successRate : 100,
+    1200
+  );
+  const animatedAvg = useCountUp(
+    parseFloat(metrics.avgDurationSec) || 0,
+    1400,
+    2
+  );
+  const animatedFastest = useCountUp(
+    parseFloat(metrics.fastestDurationSec) || 0,
+    1400,
+    2
+  );
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
@@ -49,15 +98,15 @@ export const DailyMetricsCard: React.FC<DailyMetricsCardProps> = ({ metrics }) =
               Envios Hoje
             </span>
             <div className="flex items-baseline gap-1.5">
-              <span className="text-xl sm:text-2xl font-black text-white font-mono tracking-tight">
-                {metrics.totalToday}
+              <span className="text-xl sm:text-2xl font-black text-white font-mono tracking-tight tabular-nums">
+                {animatedTotal}
               </span>
               <span className="text-xs text-slate-400 font-mono">
                 {metrics.totalToday === 1 ? 'imagem' : 'imagens'}
               </span>
             </div>
             <p className="text-[10px] text-slate-400">
-              {metrics.totalToday > 0 ? `${metrics.successCount} fichas completas` : 'Pronto para receber prints'}
+              {metrics.totalToday > 0 ? `${animatedSuccess} fichas completas` : 'Pronto para receber prints'}
             </p>
           </div>
 
@@ -73,8 +122,8 @@ export const DailyMetricsCard: React.FC<DailyMetricsCardProps> = ({ metrics }) =
               Taxa de Acerto
             </span>
             <div className="flex items-baseline gap-1.5">
-              <span className="text-xl sm:text-2xl font-black text-emerald-400 font-mono tracking-tight">
-                {metrics.totalToday > 0 ? `${metrics.successRate}%` : '100%'}
+              <span className="text-xl sm:text-2xl font-black text-emerald-400 font-mono tracking-tight tabular-nums">
+                {animatedRate}%
               </span>
               <span className="text-[10px] text-emerald-500 font-mono font-bold">
                 {metrics.totalToday > 0 && metrics.successRate >= 95 ? '⚡ Alta Precisão' : 'Calibrado'}
@@ -97,15 +146,15 @@ export const DailyMetricsCard: React.FC<DailyMetricsCardProps> = ({ metrics }) =
               Tempo Médio
             </span>
             <div className="flex items-baseline gap-1.5">
-              <span className="text-xl sm:text-2xl font-black text-amber-400 font-mono tracking-tight">
-                {metrics.avgDurationSec}s
+              <span className="text-xl sm:text-2xl font-black text-amber-400 font-mono tracking-tight tabular-nums">
+                {animatedAvg}s
               </span>
               <span className="text-[10px] text-amber-400 font-mono">
                 / requisição
               </span>
             </div>
             <p className="text-[10px] text-slate-400">
-              Melhor tempo: <strong className="text-slate-300 font-mono">{metrics.fastestDurationSec}s</strong>
+              Melhor tempo: <strong className="text-slate-300 font-mono">{animatedFastest}s</strong>
             </p>
           </div>
 
