@@ -194,6 +194,8 @@ export async function extractWithGemini(
   let globalTimeout: ReturnType<typeof setTimeout>;
 
   try {
+    let runP2Now: (() => void) | null = null;
+
     const p1 = executeGeminiRequest(key1, PRIMARY_MODEL, compressed, ctrl1.signal, slotName1).then((raw) => ({
       raw,
       slot: slotName1,
@@ -201,17 +203,34 @@ export async function extractWithGemini(
     }));
 
     const hedgedP2 = new Promise<{ raw: string; slot: string; hedged: boolean }>((resolve, reject) => {
-      const hedgeTimer = setTimeout(async () => {
+      let isExecuted = false;
+
+      const runP2 = async () => {
+        if (isExecuted) return;
+        isExecuted = true;
         try {
           const raw2 = await executeGeminiRequest(key2, PRIMARY_MODEL, compressed, ctrl2.signal, slotName2);
           resolve({ raw: raw2, slot: slotName2, hedged: true });
         } catch (e) {
           reject(e);
         }
+      };
+
+      const hedgeTimer = setTimeout(() => {
+        runP2();
       }, 2500);
 
+      runP2Now = () => {
+        clearTimeout(hedgeTimer);
+        runP2();
+      };
+
       // Se p1 resolver antes dos 2500ms, cancela o hedgeTimer
-      p1.then(() => clearTimeout(hedgeTimer)).catch(() => clearTimeout(hedgeTimer));
+      p1.then(() => clearTimeout(hedgeTimer)).catch(() => {
+        // Se p1 falhar com erro antes dos 2500ms, aciona p2 IMEDIATAMENTE!
+        clearTimeout(hedgeTimer);
+        runP2();
+      });
     });
 
     const timeoutPromise = new Promise<never>((_, reject) => {
@@ -222,19 +241,26 @@ export async function extractWithGemini(
       }, 9000);
     });
 
-    const winner = await Promise.race([
-      p1.then((r) => {
+    // Se p1 falhar, não derruba o Promise.race: cede a vez para p2 responder!
+    const safeP1 = p1
+      .then((r) => {
         ctrl2.abort();
         keyRotationIndex = (keyRotationIndex + 1) % keys.length;
         return r;
-      }),
-      hedgedP2.then((r) => {
-        ctrl1.abort();
-        keyRotationIndex = (keyRotationIndex + 2) % keys.length;
-        return r;
-      }),
-      timeoutPromise,
-    ]);
+      })
+      .catch(() => {
+        if (runP2Now) runP2Now();
+        // Retorna promessa pendente para o race aguardar p2
+        return new Promise<{ raw: string; slot: string; hedged: boolean }>(() => {});
+      });
+
+    const safeP2 = hedgedP2.then((r) => {
+      ctrl1.abort();
+      keyRotationIndex = (keyRotationIndex + 2) % keys.length;
+      return r;
+    });
+
+    const winner = await Promise.race([safeP1, safeP2, timeoutPromise]);
 
     clearTimeout(globalTimeout!);
     return parseAndFormatResponse(winner.raw, 'gemini-3.5-flash-lite', winner.slot, winner.hedged);

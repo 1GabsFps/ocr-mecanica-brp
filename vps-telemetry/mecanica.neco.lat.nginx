@@ -8,8 +8,22 @@ server {
     include /etc/nginx/mime.types;
     default_type text/html;
 
+    # Evita cache para HTML e checagem de versão (Garante auto-update instantâneo)
+    location = /index.html {
+        add_header Cache-Control "no-cache, no-store, must-revalidate, max-age=0";
+        add_header Pragma "no-cache";
+        add_header Expires "0";
+    }
+
+    location = /version.json {
+        add_header Cache-Control "no-cache, no-store, must-revalidate, max-age=0";
+        add_header Pragma "no-cache";
+        add_header Expires "0";
+    }
+
     location / {
         try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache, no-store, must-revalidate, max-age=0";
     }
 
     # Proxy reverso para o microsserviço de telemetria Docker (Porta 8002)
@@ -22,6 +36,7 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    # Chunks imutáveis do Vite (com hash no nome) podem ter cache longo
     location ~* \.(?:css|js)$ {
         try_files $uri =404;
         expires 1y;

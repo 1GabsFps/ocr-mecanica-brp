@@ -1,11 +1,39 @@
 import { useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 
+let globalCachedServerVersion: number | null = null;
+
+export async function checkServerVersion(): Promise<{ isOutdated: boolean; serverVersion: number | null }> {
+  try {
+    const res = await fetch(`/version.json?t=${Date.now()}`, {
+      cache: 'no-store',
+      headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0' },
+    });
+
+    if (!res.ok) return { isOutdated: false, serverVersion: null };
+
+    const data = await res.json();
+    const serverVersion = data.version;
+
+    if (globalCachedServerVersion === null) {
+      globalCachedServerVersion = serverVersion;
+      return { isOutdated: false, serverVersion };
+    }
+
+    if (serverVersion && serverVersion !== globalCachedServerVersion) {
+      return { isOutdated: true, serverVersion };
+    }
+
+    return { isOutdated: false, serverVersion };
+  } catch (_) {
+    return { isOutdated: false, serverVersion: null };
+  }
+}
+
 /**
- * Hook que monitora novas versões no servidor e força a atualização automática sem toasts duplicados.
+ * Hook que monitora novas versões no servidor e força a atualização automática instantânea.
  */
 export function useAutoUpdate() {
-  const initialVersionRef = useRef<number | null>(null);
   const isUpdatingRef = useRef<boolean>(false);
   const isCheckingRef = useRef<boolean>(false);
   const checkDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -18,41 +46,23 @@ export function useAutoUpdate() {
       isCheckingRef.current = true;
 
       try {
-        const res = await fetch(`/version.json?t=${Date.now()}`, {
-          cache: 'no-store',
-          headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' },
-        });
+        const { isOutdated } = await checkServerVersion();
 
-        if (!res.ok) return;
-
-        const data = await res.json();
-        const serverVersion = data.version;
-
-        if (initialVersionRef.current === null) {
-          initialVersionRef.current = serverVersion;
-          return;
-        }
-
-        if (serverVersion && serverVersion !== initialVersionRef.current) {
+        if (isOutdated && !isUpdatingRef.current) {
           isUpdatingRef.current = true;
 
-          // ID único impede que o Sonner gere notificações duplicadas na tela
           toast.info('🚀 Nova atualização do sistema disponível!', {
             id: 'auto-update-system-toast',
-            description: 'Recarregando automaticamente para aplicar as novidades...',
-            duration: 3500,
-            action: {
-              label: 'Atualizar Agora',
-              onClick: () => window.location.reload(),
-            },
+            description: 'Aplicando nova versão instantaneamente...',
+            duration: 1500,
           });
 
-          // Recarrega automaticamente após 2.5 segundos
+          // Recarrega instantaneamente (300ms) para não permitir envio em código obsoleto
           setTimeout(() => {
             if (isMounted) {
               window.location.reload();
             }
-          }, 2500);
+          }, 300);
         }
       } catch (_) {
       } finally {
@@ -63,10 +73,10 @@ export function useAutoUpdate() {
     // Checagem inicial ao carregar a página
     checkVersion();
 
-    // Checagem periódica a cada 45 segundos
-    const interval = setInterval(checkVersion, 45 * 1000);
+    // Checagem periódica a cada 30 segundos
+    const interval = setInterval(checkVersion, 30 * 1000);
 
-    // Checagem com debounce ao alternar janelas (evita duplo disparo de focus + visibilitychange)
+    // Checagem imediata ao alternar janelas (Alt+Tab)
     const triggerDebouncedCheck = () => {
       if (checkDebounceTimerRef.current) {
         clearTimeout(checkDebounceTimerRef.current);
@@ -75,7 +85,7 @@ export function useAutoUpdate() {
         if (document.visibilityState === 'visible') {
           checkVersion();
         }
-      }, 150);
+      }, 100);
     };
 
     document.addEventListener('visibilitychange', triggerDebouncedCheck);
