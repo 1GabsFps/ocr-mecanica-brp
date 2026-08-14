@@ -222,7 +222,7 @@ export async function extractWithGemini(
         ctrl1.abort();
         ctrl2.abort();
         reject(new Error('Tempo limite de requisição excedido'));
-      }, 8000);
+      }, 25000);
     });
 
     // Se p1 falhar, não derruba o Promise.race: cede a vez para p2 responder!
@@ -267,14 +267,14 @@ export async function extractWithGemini(
     ctrl2.abort();
     console.warn('Falha na corrida principal 3.5, tentando fallback secundário:', err);
 
-    // Fallback de emergência caso haja indisponibilidade global: direto no modelo 3.1 com timeout 2500ms
+    // Fallback de emergência caso haja indisponibilidade global: direto no modelo 3.1 com timeout 10000ms
     for (const model of FALLBACK_MODELS) {
       for (let i = 0; i < keys.length; i++) {
         const k = keys[i];
         const slot = `Chave #${i + 1} (Fallback)`;
         try {
           const c = new AbortController();
-          const t = setTimeout(() => c.abort(), 2500);
+          const t = setTimeout(() => c.abort(), 10000);
           const raw = await executeGeminiRequest(k, model, compressed, c.signal, slot);
           clearTimeout(t);
           return parseAndFormatResponse(raw, model, slot, false);
