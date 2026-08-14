@@ -1,6 +1,0 @@
-{
-  "name": "FiveM Mechanic OCR",
-  "description": "Extração inteligente e local (OCR client-side) de dados de veículos em HUDs de oficinas do FiveM/GTA RP.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
