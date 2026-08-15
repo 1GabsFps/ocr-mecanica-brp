@@ -90,7 +90,7 @@ export const DailyMetricsCard: React.FC<DailyMetricsCardProps> = memo(({ metrics
           <div>
             <h3 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
               <span>Desempenho do Sistema</span>
-              <span className="text-[10px] text-slate-400 font-normal font-mono lowercase">(últimas 24h)</span>
+              <span className="text-[10px] text-slate-400 font-normal font-mono lowercase">(reinicia às 03:00)</span>
             </h3>
           </div>
         </div>

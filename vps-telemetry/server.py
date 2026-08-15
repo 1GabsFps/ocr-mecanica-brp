@@ -3,9 +3,20 @@ import sqlite3
 import time
 import os
 import threading
+import datetime
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 DB_PATH = os.environ.get('DB_PATH', '/app/data/telemetry.db')
+BRT_TZ = datetime.timezone(datetime.timedelta(hours=-3))
+
+def get_operational_day_start_ms():
+    """Retorna o timestamp (ms) do início do turno operacional atual (03:00 AM no Horário de Brasília)."""
+    now_brt = datetime.datetime.now(BRT_TZ)
+    if now_brt.hour < 3:
+        start_brt = now_brt.replace(hour=3, minute=0, second=0, microsecond=0) - datetime.timedelta(days=1)
+    else:
+        start_brt = now_brt.replace(hour=3, minute=0, second=0, microsecond=0)
+    return int(start_brt.timestamp() * 1000)
 
 def get_db_connection():
     conn = sqlite3.connect(DB_PATH, timeout=5.0)
@@ -57,8 +68,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        now_ms = int(time.time() * 1000)
-        day_ago_ms = now_ms - (24 * 60 * 60 * 1000)
+        start_ms = get_operational_day_start_ms()
 
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -70,7 +80,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                     MIN(CASE WHEN duration_ms > 0 THEN duration_ms ELSE NULL END)
                 FROM extractions
                 WHERE timestamp >= ?
-            ''', (day_ago_ms,))
+            ''', (start_ms,))
             row = cursor.fetchone()
 
         total_today = row[0] if row else 0

@@ -69,6 +69,25 @@ export async function sendServerTelemetry(
 }
 
 /**
+ * Retorna o timestamp (ms) do início do turno de trabalho atual (03:00 AM no Horário de Brasília).
+ */
+export function getOperationalDayStartMs(): number {
+  const now = new Date();
+  // Converte para horário de Brasília (UTC-3)
+  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+  const brt = new Date(utc - 3 * 3600000);
+
+  const startBrt = new Date(brt);
+  if (brt.getHours() < 3) {
+    startBrt.setDate(startBrt.getDate() - 1);
+  }
+  startBrt.setHours(3, 0, 0, 0);
+
+  const diffFromBrt = startBrt.getTime() - brt.getTime();
+  return now.getTime() + diffFromBrt;
+}
+
+/**
  * Carrega os registros de telemetria locais como fallback.
  */
 export function loadDailyRecords(): OcrTelemetryRecord[] {
@@ -77,9 +96,9 @@ export function loadDailyRecords(): OcrTelemetryRecord[] {
     if (!raw) return [];
 
     const records: OcrTelemetryRecord[] = JSON.parse(raw);
-    const now = Date.now();
+    const startMs = getOperationalDayStartMs();
 
-    const valid = records.filter((r) => now - r.timestamp < EXPIRATION_MS);
+    const valid = records.filter((r) => r.timestamp >= startMs);
     if (valid.length !== records.length) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(valid));
     }
