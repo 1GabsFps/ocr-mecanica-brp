@@ -275,18 +275,22 @@ export default function App() {
       // Se tiver chave configurada, executar a IA diretamente em ~1.5s
       if (currentKey && currentKey.trim().length > 0) {
         setOcrProgress({
-          status: 'Conectando ao Gemini 3.5 Flash Lite...',
-          progress: 35,
+          status: 'Iniciando leitura ultra-rápida com IA...',
+          progress: 20,
           stage: 'recognizing',
+          badge: 'Google Gemini',
+          badgeType: 'default',
         });
 
         try {
-          const result = await extractWithGemini(src, currentKey, (_modelName, modelDisplay) => {
+          const result = await extractWithGemini(src, currentKey, (status, progress, badge, badgeType) => {
             if (activeProcessIdRef.current === currentProcessId) {
               setOcrProgress({
-                status: `Processando imagem com ${modelDisplay}...`,
-                progress: 60,
+                status,
+                progress,
                 stage: 'recognizing',
+                badge,
+                badgeType,
               });
             }
           });
@@ -329,6 +333,8 @@ export default function App() {
               : `✓ Extraído com ${displayModel}!`,
             progress: 100,
             stage: 'complete',
+            badge: displayModel,
+            badgeType: 'success',
           });
           setIsProcessing(false);
           return;
@@ -336,9 +342,11 @@ export default function App() {
           if (activeProcessIdRef.current !== currentProcessId) return;
           console.warn('Gemini indisponível, acionando contingência Cloudflare Llama 3.2 Vision:', geminiErr);
           setOcrProgress({
-            status: 'Alternando para contingência Cloudflare Llama 3.2 Vision...',
+            status: 'Google sobrecarregado (503/Timeout). Alternando para Cloudflare Llama 3.2 Vision...',
             progress: 50,
             stage: 'recognizing',
+            badge: 'Cloudflare Vision',
+            badgeType: 'cloudflare',
           });
         }
       }
@@ -349,6 +357,8 @@ export default function App() {
           status: 'Processando com Cloudflare Llama 3.2 Vision...',
           progress: 60,
           stage: 'recognizing',
+          badge: 'Cloudflare Vision',
+          badgeType: 'cloudflare',
         });
 
         const result = await extractWithCloudflare(src, (_modelName, modelDisplay) => {
@@ -357,6 +367,8 @@ export default function App() {
               status: `Processando imagem com ${modelDisplay}...`,
               progress: 75,
               stage: 'recognizing',
+              badge: 'Llama 3.2 Vision',
+              badgeType: 'cloudflare',
             });
           }
         });
@@ -384,7 +396,7 @@ export default function App() {
         sendDiscordSystemAlert({
           errorType: 'Contingência Ativada: Cloudflare Llama 3.2 Vision',
           keySlot: 'Cloudflare Workers AI',
-          message: 'Google Gemini atingiu tempo limite ou indisponibilidade. A Cloudflare assumiu e extraiu os dados com sucesso.',
+          message: 'Google Gemini atingiu tempo limite ou indisponibilidade (503/429). A Cloudflare assumiu e extraiu os dados com sucesso.',
           mentionAdmin: false,
         });
 
@@ -406,6 +418,8 @@ export default function App() {
             : `✓ Extraído com ${displayModel}!`,
           progress: 100,
           stage: 'complete',
+          badge: 'Cloudflare Vision',
+          badgeType: 'success',
         });
         setIsProcessing(false);
         return;
@@ -425,6 +439,8 @@ export default function App() {
           status: 'Falha na conexão com os servidores de IA.',
           progress: 0,
           stage: 'error',
+          badge: 'Falha Geral',
+          badgeType: 'error',
         });
         toast.error('Erro ao processar imagem com IA');
       } finally {

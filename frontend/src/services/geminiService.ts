@@ -95,8 +95,19 @@ async function executeGeminiRequest(
     const errorData = await response.json().catch(() => ({}));
     const message = errorData?.error?.message || `Erro ${response.status}: ${response.statusText}`;
 
-    // Alerta de log informativo no Discord se bater Cota 429 ou Alerta Crítico se for Chave Inválida
-    if (response.status === 429) {
+    // Alerta de log informativo no Discord se bater 503, Cota 429 ou Alerta Crítico se for Chave Inválida
+    if (response.status === 503) {
+      sendDiscordSystemAlert({
+        errorType: 'Google Gemini Sobrecarregado (503 Service Unavailable)',
+        keySlot: keySlotName || 'Chave do Pool',
+        message: 'Servidores de GPU do Google temporariamente em alta demanda. Alternando chave/provedor instantaneamente.',
+        code: 503,
+        mentionAdmin: false,
+      });
+      const err: any = new Error('Google 503: Servidor temporariamente sobrecarregado');
+      err.status = 503;
+      throw err;
+    } else if (response.status === 429) {
       sendDiscordSystemAlert({
         errorType: 'Cota de Requisições Atingida no Gemini (429)',
         keySlot: keySlotName || 'Chave do Pool',
@@ -122,24 +133,40 @@ async function executeGeminiRequest(
   return rawContent;
 }
 
+export type GeminiProgressCallback = (
+  status: string,
+  progress: number,
+  badge?: string,
+  badgeType?: 'default' | 'hedge' | 'switch' | 'cloudflare' | 'success' | 'error'
+) => void;
+
 /**
  * Extração de alta velocidade com Hedged Racing (Corrida de Chaves com Aceleração a 2.5s)
- * e Auditoria Técnica de Slots de Chave.
+ * e Auditoria Técnica de Slots de Chave com desvio instantâneo em 503.
  */
 export async function extractWithGemini(
   imageDataUrl: string,
   apiKeyInput: string,
-  onModelAttempt?: (modelName: string, modelDisplay: string) => void
+  onStatusUpdate?: GeminiProgressCallback
 ): Promise<VehicleData> {
   const keys = parseApiKeys(apiKeyInput);
   if (keys.length === 0) {
     throw new Error('Chave de API não configurada.');
   }
 
+  onStatusUpdate?.('Otimizando imagem para leitura ultra-rápida...', 25, 'Processando Imagem', 'default');
+
   // 1. Pré-processar em Ultra-HD JPEG (1600px, 95% de qualidade)
   const compressed = await compressImageForAi(imageDataUrl, 1600, 0.95, 'jpeg');
 
-  onModelAttempt?.(PRIMARY_MODEL, 'Gemini 3.5 Flash Lite');
+  const idx1 = keyRotationIndex % keys.length;
+  const idx2 = (keyRotationIndex + 1) % keys.length;
+  const key1 = keys[idx1];
+  const key2 = keys[idx2];
+  const slotName1 = `Chave #${idx1 + 1} (Principal)`;
+  const slotName2 = `Chave #${idx2 + 1} (Reserva/Hedge)`;
+
+  onStatusUpdate?.(`Processando com Gemini 3.5 (${slotName1})...`, 40, `Chave #${idx1 + 1}`, 'default');
 
   // Se houver apenas 1 chave, executa chamada direta simples
   if (keys.length === 1) {
@@ -155,16 +182,7 @@ export async function extractWithGemini(
     }
   }
 
-  // CORRIDA INTELIGENTE DE CHAVES (Hedged Racing Calibrado para Latência de 2.5s):
-  // Dispara a Chave 1. Se não responder em 2500ms (dando folga para conexões distantes), dispara a Chave 2 em paralelo.
-  // A mais rápida entrega o resultado na hora e cancela a chave lenta!
-  const idx1 = keyRotationIndex % keys.length;
-  const idx2 = (keyRotationIndex + 1) % keys.length;
-  const key1 = keys[idx1];
-  const key2 = keys[idx2];
-  const slotName1 = `Chave #${idx1 + 1} (Principal)`;
-  const slotName2 = `Chave #${idx2 + 1} (Reserva/Hedge)`;
-
+  // CORRIDA INTELIGENTE DE CHAVES (Hedged Racing Calibrado para Latência de 2.5s com Desvio Imediato de 503):
   const ctrl1 = new AbortController();
   const ctrl2 = new AbortController();
 
@@ -192,7 +210,6 @@ export async function extractWithGemini(
           const raw2 = await executeGeminiRequest(key2, PRIMARY_MODEL, compressed, ctrl2.signal, slotName2);
           resolve({ raw: raw2, slot: slotName2, hedged: true });
         } catch (e: any) {
-          // Se foi abortado externamente, não propaga erro ruidoso
           if (e.name === 'AbortError' || ctrl2.signal.aborted) {
             return;
           }
@@ -201,6 +218,7 @@ export async function extractWithGemini(
       };
 
       hedgeTimer = setTimeout(() => {
+        onStatusUpdate?.(`⚡ Demora no Google: Acionando ${slotName2} em paralelo...`, 55, 'Hedge Ativo', 'hedge');
         runP2();
       }, 2500);
 
@@ -215,6 +233,15 @@ export async function extractWithGemini(
         p1Rejected = true;
         p1Error = err;
         if (hedgeTimer) clearTimeout(hedgeTimer);
+        const is503 = err?.status === 503 || err?.message?.includes('503') || err?.message?.includes('overloaded');
+        const is429 = err?.status === 429 || err?.message?.includes('429');
+        if (is503) {
+          onStatusUpdate?.(`⚠️ Google sobrecarregado (503). Alternando para ${slotName2}...`, 60, '503 Desvio', 'switch');
+        } else if (is429) {
+          onStatusUpdate?.(`⚠️ Cota atingida na Chave #${idx1 + 1}. Alternando para ${slotName2}...`, 60, 'Troca de Chave', 'switch');
+        } else {
+          onStatusUpdate?.(`⚠️ Oscilação na Chave #${idx1 + 1}. Alternando para ${slotName2}...`, 60, 'Troca de Chave', 'switch');
+        }
         runP2();
       });
     });
@@ -227,7 +254,6 @@ export async function extractWithGemini(
       }, 25000);
     });
 
-    // Se p1 falhar, não derruba o Promise.race: cede a vez para p2 responder!
     const safeP1 = p1
       .then((r) => {
         ctrl2.abort();
@@ -238,7 +264,6 @@ export async function extractWithGemini(
         p1Rejected = true;
         p1Error = err;
         if (runP2Now) runP2Now();
-        // Retorna promessa pendente para o race aguardar p2
         return new Promise<{ raw: string; slot: string; hedged: boolean }>(() => {});
       });
 
@@ -249,7 +274,6 @@ export async function extractWithGemini(
         return r;
       })
       .catch((err) => {
-        // Se P1 já falhou e P2 também falhou, rejeita imediatamente o race
         if (p1Rejected) {
           throw new Error(`Ambas as chaves falharam. P1: ${p1Error?.message || 'erro'} | P2: ${err?.message || 'erro'}`);
         }
@@ -269,14 +293,16 @@ export async function extractWithGemini(
     ctrl2.abort();
     console.warn('Falha na corrida principal 3.5, tentando fallback secundário:', err);
 
-    // Fallback de emergência caso haja indisponibilidade global: direto no modelo 3.1 com timeout 10000ms
+    onStatusUpdate?.('🔄 Tentando modelo de contingência Gemini 3.1 Flash Lite...', 68, 'Gemini 3.1', 'switch');
+
+    // Fallback de emergência caso haja indisponibilidade global: direto no modelo 3.1 com timeout 8000ms
     for (const model of FALLBACK_MODELS) {
       for (let i = 0; i < keys.length; i++) {
         const k = keys[i];
-        const slot = `Chave #${i + 1} (Fallback)`;
+        const slot = `Chave #${i + 1} (Fallback 3.1)`;
         try {
           const c = new AbortController();
-          const t = setTimeout(() => c.abort(), 10000);
+          const t = setTimeout(() => c.abort(), 8000);
           const raw = await executeGeminiRequest(k, model, compressed, c.signal, slot);
           clearTimeout(t);
           return parseAndFormatResponse(raw, model, slot, false);
