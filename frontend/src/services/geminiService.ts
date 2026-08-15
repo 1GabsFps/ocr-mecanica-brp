@@ -4,7 +4,7 @@ import { compressImageForAi } from '../utils/imagePreprocessing';
 import { sendDiscordSystemAlert } from './discordService';
 
 // Modelo principal ultra-calibrado para visão computacional rápida e precisa
-export const PRIMARY_MODEL = 'gemini-2.5-flash';
+export const PRIMARY_MODEL = 'gemini-3.5-flash-lite';
 
 // Rotação sequencial entre as chaves cadastradas
 let keyRotationIndex = 0;

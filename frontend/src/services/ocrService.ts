@@ -11,9 +11,10 @@ const CORES_CONHECIDAS = new Set([
 /**
  * Limpa símbolos isolados de tabela (pipes, barras, underlines) mas PRESERVA hífens em modelos compostos (ex: F-150, GT-R).
  */
-export function cleanSymbols(text: string): string {
-  if (!text) return '';
-  return text
+export function cleanSymbols(text: any): string {
+  if (text === null || text === undefined) return '';
+  const str = typeof text === 'string' ? text : String(text);
+  return str
     .replace(/^[—\-_=|\*~\/\\\s:;]+|[—\-_=|\*~\/\\\s:;]+$/g, '')
     .replace(/[—_=|\*~\/\\]+/g, ' ')
     .replace(/\s*-\s*/g, '-')
@@ -25,9 +26,10 @@ export function cleanSymbols(text: string): string {
 /**
  * Formata placas no padrão tradicional ou Mercosul com correção de ambiguidade e remoção de sufixos de resolução.
  */
-export function formatPlate(rawText: string): string {
-  if (!rawText) return '';
-  const clean = rawText.toUpperCase().replace(/[^A-Z0-9]/g, '');
+export function formatPlate(rawText: any): string {
+  if (rawText === null || rawText === undefined) return '';
+  const str = typeof rawText === 'string' ? rawText : String(rawText);
+  const clean = str.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
   // 1. Padrão Tradicional: 3 Letras + 4 Dígitos (ex: WSI87238K -> WSI 8723, MGP7729 -> MGP 7729)
   const mOld = clean.match(/([A-Z]{3})(\d{4})/);
@@ -64,15 +66,16 @@ export function formatPlate(rawText: string): string {
   }
 
   // 4. Placas curtas ou formatos FiveM especiais (ex: 2 a 4 caracteres)
-  return clean.length >= 4 ? clean : rawText.trim().toUpperCase();
+  return clean.length >= 4 ? clean : str.trim().toUpperCase();
 }
 
 /**
  * Formata nome do proprietário em Title Case, limpando ruídos e resíduos de corte de OCR.
  */
-export function formatOwner(rawText: string): string {
-  if (!rawText) return '';
-  let t = cleanSymbols(rawText);
+export function formatOwner(rawText: any): string {
+  if (rawText === null || rawText === undefined) return '';
+  const str = typeof rawText === 'string' ? rawText : String(rawText);
+  let t = cleanSymbols(str);
   t = t.replace(/([a-z])([A-Z])/g, '$1 $2');
   t = t.replace(/^0\s+/, '');
   t = t.replace(/\bFolipa\b/gi, 'Felipe');
@@ -104,9 +107,10 @@ export function formatOwner(rawText: string): string {
 /**
  * Formata modelo do veículo em CAIXA ALTA preservando códigos de versão (ex: FH16 780, GOLF GTI MK4, AMAROK CABINE SIMPLES, FENEMÊ).
  */
-export function formatModel(rawText: string): string {
-  if (!rawText) return '';
-  let t = cleanSymbols(rawText);
+export function formatModel(rawText: any): string {
+  if (rawText === null || rawText === undefined) return '';
+  const str = typeof rawText === 'string' ? rawText : String(rawText);
+  let t = cleanSymbols(str);
 
   // Corrigir ambiguidades OCR no FH16 780 com exigência de padrão sem corromper outros FH (ex: FH 540)
   t = t.replace(/\bFH(?:16|IE|1E|IS|1S|I6|L6|IST)\s*(?:780|T80|7BO|TBO|BO)\b/gi, 'FH16 780');
