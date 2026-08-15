@@ -48,7 +48,13 @@ export async function extractWithCloudflare(
   const compressed = await compressImageForAi(imageSource, 1600, 0.95, 'jpeg');
   const imageBytes = base64ToUint8Array(compressed.base64Data);
 
-  const url = `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/run/${CLOUDFLARE_VISION_MODEL}`;
+  const isLocalhost =
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+  const url = isLocalhost
+    ? `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/run/${CLOUDFLARE_VISION_MODEL}`
+    : `/api/cloudflare-ai/${CLOUDFLARE_VISION_MODEL}`;
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s timeout
