@@ -302,16 +302,15 @@ export default function App() {
             durationMs: elapsedMs,
           };
 
+          // 1. Atualização Instantânea da Interface e Auto-Copy (0ms de latência percebida)
           setVehicleData(finalDataWithTiming);
           setColumns([]);
           setWords([]);
           setRawText(result.rawText || '');
+          setIsProcessing(false);
 
           addService(finalDataWithTiming, src);
-          await performAutoCopy(result);
-
-          // Registra telemetria do dia
-          logExtraction(isComplete, elapsedMs, result.aiModel || 'gemini-3.5-flash-lite', result.placa, result.modelo);
+          performAutoCopy(result);
 
           // Registra assinatura para proteção anti-duplicidade
           lastProcessedSignatureRef.current = {
@@ -329,11 +328,16 @@ export default function App() {
             progress: 100,
             stage: 'complete',
           });
-          setIsProcessing(false);
+
+          // 2. Fire-and-Forget em background: Gravação no SQLite da VPS (Desacoplada da UI)
+          setTimeout(() => {
+            logExtraction(isComplete, elapsedMs, result.aiModel || 'gemini-3.5-flash-lite', result.placa, result.modelo);
+          }, 0);
+
           return;
         } catch (geminiErr: any) {
           if (activeProcessIdRef.current !== currentProcessId) return;
-          console.warn('Gemini indisponível, acionando contingência Cloudflare Llama 3.2 Vision:', geminiErr);
+          console.warn('Gemini excedeu 8s ou está indisponível, acionando contingência Cloudflare Llama 3.2 Vision:', geminiErr);
           setOcrProgress({
             status: 'Conectando ao servidor reserva...',
             progress: 50,
@@ -362,24 +366,15 @@ export default function App() {
           durationMs: elapsedMs,
         };
 
+        // 1. Atualização Instantânea da Interface e Auto-Copy (0ms)
         setVehicleData(finalDataWithTiming);
         setColumns([]);
         setWords([]);
         setRawText(result.rawText || '');
+        setIsProcessing(false);
 
         addService(finalDataWithTiming, src);
-        await performAutoCopy(result);
-
-        // Registra log informativo no Discord de que a contingência assumiu com sucesso
-        sendDiscordSystemAlert({
-          errorType: 'Contingência Ativada: Cloudflare Llama 3.2 Vision',
-          keySlot: 'Cloudflare Workers AI',
-          message: 'Google Gemini atingiu tempo limite ou indisponibilidade (503/429). A Cloudflare assumiu e extraiu os dados com sucesso.',
-          mentionAdmin: false,
-        });
-
-        // Registra telemetria do dia
-        logExtraction(isComplete, elapsedMs, 'cloudflare-llama-3.2-11b', result.placa, result.modelo);
+        performAutoCopy(result);
 
         // Registra assinatura para proteção anti-duplicidade
         lastProcessedSignatureRef.current = {
@@ -397,19 +392,33 @@ export default function App() {
           progress: 100,
           stage: 'complete',
         });
-        setIsProcessing(false);
+
+        // 2. Fire-and-Forget em background: Alerta informativo Discord e Telemetria SQLite
+        setTimeout(() => {
+          sendDiscordSystemAlert({
+            errorType: 'Contingência Ativada: Cloudflare Llama 3.2 Vision',
+            keySlot: 'Cloudflare Workers AI',
+            message: 'Google Gemini atingiu tempo limite (8s) ou indisponibilidade. A Cloudflare assumiu e extraiu os dados com sucesso.',
+            mentionAdmin: false,
+          });
+
+          logExtraction(isComplete, elapsedMs, 'cloudflare-llama-3.2-11b', result.placa, result.modelo);
+        }, 0);
+
         return;
       } catch (err: any) {
         if (activeProcessIdRef.current !== currentProcessId) return;
         console.error('Erro na contingência Cloudflare Vision:', err);
 
         // Alerta Crítico Real no Discord com menção ao administrador
-        sendDiscordSystemAlert({
-          errorType: 'Falha Total em Todas as IAs (Google Gemini e Cloudflare)',
-          keySlot: 'Todas as IAs',
-          message: err?.message || 'Nenhum dos servidores de IA conseguiu processar a imagem.',
-          mentionAdmin: true,
-        });
+        setTimeout(() => {
+          sendDiscordSystemAlert({
+            errorType: 'Falha Total em Todas as IAs (Google Gemini e Cloudflare)',
+            keySlot: 'Todas as IAs',
+            message: err?.message || 'Nenhum dos servidores de IA conseguiu processar a imagem.',
+            mentionAdmin: true,
+          });
+        }, 0);
 
         setOcrProgress({
           status: 'Falha na conexão com os servidores de IA.',

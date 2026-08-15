@@ -27,7 +27,7 @@ Retorne OBRIGATORIAMENTE apenas um objeto JSON puro:
 {"placa": "STRING", "proprietario": "STRING", "modelo": "STRING"}`;
 
 /**
- * Executa uma chamada direta e limpa para a API do Gemini.
+ * Executa uma chamada direta para a API do Gemini via Proxy Nginx Keep-Alive (ou direto em localhost).
  */
 async function executeGeminiRequest(
   apiKey: string,
@@ -36,7 +36,15 @@ async function executeGeminiRequest(
   signal: AbortSignal,
   keySlotName?: string
 ): Promise<string> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const isLocalhost =
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+  const baseUrl = isLocalhost
+    ? 'https://generativelanguage.googleapis.com/'
+    : '/api/gemini-ai/';
+
+  const url = `${baseUrl}v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   const response = await fetch(url, {
     method: 'POST',
@@ -70,12 +78,11 @@ async function executeGeminiRequest(
     const errorData = await response.json().catch(() => ({}));
     const message = errorData?.error?.message || `Erro ${response.status}: ${response.statusText}`;
 
-    // Alerta de log informativo no Discord se bater 503, Cota 429 ou Alerta Crítico se for Chave Inválida
     if (response.status === 503) {
       sendDiscordSystemAlert({
         errorType: 'Google Gemini Sobrecarregado (503 Service Unavailable)',
         keySlot: keySlotName || 'Chave do Pool',
-        message: 'Servidores de GPU do Google em alta demanda momentânea.',
+        message: 'Servidores de GPU do Google em alta demanda. Acionando Cloudflare Vision.',
         code: 503,
         mentionAdmin: false,
       });
@@ -83,7 +90,7 @@ async function executeGeminiRequest(
       sendDiscordSystemAlert({
         errorType: 'Cota de Requisições Atingida no Gemini (429)',
         keySlot: keySlotName || 'Chave do Pool',
-        message: 'Cota por minuto/dia atingida. Alternando chave.',
+        message: 'Cota de requisições excedida no Gemini. Acionando Cloudflare Vision.',
         code: 429,
         mentionAdmin: false,
       });
@@ -110,10 +117,10 @@ async function executeGeminiRequest(
 export type GeminiProgressCallback = (status: string, progress: number) => void;
 
 /**
- * Extração sequencial robusta e sem desperdício de tokens:
- * 1. Envia uma única requisição com timeout adequado de 25s (permitindo a IA responder sem cortes).
- * 2. Somente em caso de erro real (503, 429, falha de rede), tenta a próxima chave do pool.
- * 3. Se todas as chaves do Google falharem, propaga o erro para acionar a Cloudflare.
+ * Extração de alta velocidade e baixa latência:
+ * - Dispara para a chave ativa via rota Keep-Alive com timeout de 8 segundos.
+ * - Se a requisição do Google enfileirar (>8s) ou retornar erro (503/429), transfere
+ *   imediatamente para a Cloudflare Llama 3.2 Vision, sem desperdiçar tempo na mesma infraestrutura.
  */
 export async function extractWithGemini(
   imageDataUrl: string,
@@ -130,76 +137,71 @@ export async function extractWithGemini(
   // Pré-processamento em Ultra-HD JPEG
   const compressed = await compressImageForAi(imageDataUrl, 1600, 0.95, 'jpeg');
 
-  const startIndex = keyRotationIndex % keys.length;
-  let lastError: any = null;
+  const currentIdx = keyRotationIndex % keys.length;
+  const currentKey = keys[currentIdx];
+  const slotName = `Chave #${currentIdx + 1}${keys.length > 1 ? (currentIdx === 0 ? ' (Principal)' : ' (Reserva)') : ''}`;
 
-  // Tenta as chaves disponíveis de forma sequencial e paciente
-  for (let attempt = 0; attempt < keys.length; attempt++) {
-    const currentIdx = (startIndex + attempt) % keys.length;
-    const currentKey = keys[currentIdx];
-    const slotName = `Chave #${currentIdx + 1}${keys.length > 1 ? (attempt === 0 ? ' (Principal)' : ' (Reserva)') : ''}`;
+  const controller = new AbortController();
+  // Timeout ágil de 8s: se o Google não responder, pula direto para a Cloudflare
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-    if (attempt > 0) {
-      onStatusUpdate?.('Tentando chave reserva...', 50);
-    }
+  try {
+    const raw = await executeGeminiRequest(currentKey, PRIMARY_MODEL, compressed, controller.signal, slotName);
+    clearTimeout(timeoutId);
 
-    const controller = new AbortController();
-    // Timeout paciente de 25 segundos para não matar requisições em andamento
-    const timeoutId = setTimeout(() => controller.abort(), 25000);
+    // Avança a rotação de chave para a próxima requisição
+    keyRotationIndex = (currentIdx + 1) % keys.length;
 
-    try {
-      const raw = await executeGeminiRequest(currentKey, PRIMARY_MODEL, compressed, controller.signal, slotName);
-      clearTimeout(timeoutId);
-
-      // Avança a rotação para a próxima requisição
-      keyRotationIndex = (currentIdx + 1) % keys.length;
-
-      return parseAndFormatResponse(raw, PRIMARY_MODEL, slotName, attempt > 0);
-    } catch (err: any) {
-      clearTimeout(timeoutId);
-      lastError = err;
-      console.warn(`[Gemini] Falha na ${slotName}:`, err?.message || err);
-      // Continua para a próxima chave do pool caso haja mais de uma
-    }
+    return parseAndFormatResponse(raw, PRIMARY_MODEL, slotName, false);
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    console.warn(`[Gemini] Falha ou timeout de 8s na ${slotName}, pulando direto para Cloudflare:`, err?.message || err);
+    throw err || new Error('Google Gemini demorou mais de 8s ou está indisponível.');
   }
-
-  // Se todas as chaves do Google falharem, lança o erro para o App.tsx acionar a Cloudflare
-  throw lastError || new Error('Google Gemini indisponível.');
 }
 
 /**
  * Trata e normaliza a resposta JSON estruturada
  */
 function parseAndFormatResponse(
-  rawContent: string,
+  rawContent: any,
   aiModel: string,
   keySlot?: string,
   hedged?: boolean
 ): VehicleData {
   let parsed: any = {};
 
-  try {
-    parsed = JSON.parse(rawContent);
-  } catch (_) {
-    const codeBlockMatch = rawContent.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-    if (codeBlockMatch) {
-      try {
-        parsed = JSON.parse(codeBlockMatch[1]);
-      } catch (_) {}
-    }
-
-    if (!parsed.placa) {
-      const jsonMatches = [...rawContent.matchAll(/\{[\s\S]*?\}/g)];
-      for (let i = jsonMatches.length - 1; i >= 0; i--) {
+  if (typeof rawContent === 'object' && rawContent !== null) {
+    parsed = rawContent;
+  } else {
+    const text = typeof rawContent === 'string' ? rawContent : String(rawContent || '');
+    try {
+      parsed = JSON.parse(text);
+    } catch (_) {
+      const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+      if (codeBlockMatch) {
         try {
-          const candidate = JSON.parse(jsonMatches[i][0]);
-          if (candidate.placa || candidate.proprietario || candidate.modelo) {
-            parsed = candidate;
-            break;
-          }
+          parsed = JSON.parse(codeBlockMatch[1]);
         } catch (_) {}
       }
+
+      if (!parsed || typeof parsed !== 'object' || !parsed.placa) {
+        const jsonMatches = [...text.matchAll(/\{[\s\S]*?\}/g)];
+        for (let i = jsonMatches.length - 1; i >= 0; i--) {
+          try {
+            const candidate = JSON.parse(jsonMatches[i][0]);
+            if (candidate && typeof candidate === 'object' && (candidate.placa || candidate.proprietario || candidate.modelo)) {
+              parsed = candidate;
+              break;
+            }
+          } catch (_) {}
+        }
+      }
     }
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    parsed = {};
   }
 
   const rawPlaca = parsed.placa || '';
@@ -220,7 +222,7 @@ function parseAndFormatResponse(
     proprietario,
     modelo,
     servico: 'Troca de óleo e filtro',
-    rawText: rawContent,
+    rawText: typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent || {}),
     aiModel,
     keySlot,
     hedged: !!hedged,

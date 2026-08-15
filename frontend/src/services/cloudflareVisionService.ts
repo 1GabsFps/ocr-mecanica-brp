@@ -97,33 +97,42 @@ export async function extractWithCloudflare(
 /**
  * Normaliza e extrai o JSON da resposta da Cloudflare
  */
-function parseCloudflareResponse(rawContent: string): VehicleData {
+function parseCloudflareResponse(rawContent: any): VehicleData {
   let parsed: any = {};
 
-  try {
-    parsed = JSON.parse(rawContent);
-  } catch (_) {
-    // Tenta encontrar bloco ```json ... ```
-    const codeBlockMatch = rawContent.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-    if (codeBlockMatch) {
-      try {
-        parsed = JSON.parse(codeBlockMatch[1]);
-      } catch (_) {}
-    }
-
-    // Tenta capturar qualquer objeto JSON { ... }
-    if (!parsed.placa) {
-      const jsonMatches = [...rawContent.matchAll(/\{[\s\S]*?\}/g)];
-      for (let i = jsonMatches.length - 1; i >= 0; i--) {
+  if (typeof rawContent === 'object' && rawContent !== null) {
+    parsed = rawContent;
+  } else {
+    const text = typeof rawContent === 'string' ? rawContent : String(rawContent || '');
+    try {
+      parsed = JSON.parse(text);
+    } catch (_) {
+      // Tenta encontrar bloco ```json ... ```
+      const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+      if (codeBlockMatch) {
         try {
-          const candidate = JSON.parse(jsonMatches[i][0]);
-          if (candidate.placa || candidate.proprietario || candidate.modelo) {
-            parsed = candidate;
-            break;
-          }
+          parsed = JSON.parse(codeBlockMatch[1]);
         } catch (_) {}
       }
+
+      // Tenta capturar qualquer objeto JSON { ... }
+      if (!parsed || typeof parsed !== 'object' || !parsed.placa) {
+        const jsonMatches = [...text.matchAll(/\{[\s\S]*?\}/g)];
+        for (let i = jsonMatches.length - 1; i >= 0; i--) {
+          try {
+            const candidate = JSON.parse(jsonMatches[i][0]);
+            if (candidate && typeof candidate === 'object' && (candidate.placa || candidate.proprietario || candidate.modelo)) {
+              parsed = candidate;
+              break;
+            }
+          } catch (_) {}
+        }
+      }
     }
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    parsed = {};
   }
 
   const rawPlaca = parsed.placa || '';
@@ -144,7 +153,7 @@ function parseCloudflareResponse(rawContent: string): VehicleData {
     proprietario,
     modelo,
     servico: 'Troca de óleo e filtro',
-    rawText: rawContent,
+    rawText: typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent || {}),
     aiModel: 'cloudflare-llama-3.2-11b',
     keySlot: 'Cloudflare Workers AI (Contingência)',
     hedged: false,
