@@ -56,8 +56,6 @@ export interface OcrProgress {
   status: string;
   progress: number;
   stage: 'idle' | 'loading_worker' | 'preprocessing' | 'recognizing' | 'projecting' | 'complete' | 'error';
-  badge?: string;
-  badgeType?: 'default' | 'hedge' | 'switch' | 'cloudflare' | 'success' | 'error';
 }
 
 export interface ZoomState {

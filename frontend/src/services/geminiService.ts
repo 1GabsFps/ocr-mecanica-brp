@@ -3,66 +3,40 @@ import { formatPlate, formatOwner, formatModel } from './ocrService';
 import { compressImageForAi } from '../utils/imagePreprocessing';
 import { sendDiscordSystemAlert } from './discordService';
 
-/**
- * Modelos com prioridade absoluta:
- * 1. gemini-3.5-flash-lite (Ultra-rápido, alta acurácia visual e suporte nativo a responseSchema)
- * 2. gemini-3.1-flash-lite (Fallback de contingência)
- */
-const PRIMARY_MODEL = 'gemini-3.5-flash-lite';
-const FALLBACK_MODELS = ['gemini-3.1-flash-lite'];
+// Modelo principal ultra-calibrado para visão computacional rápida e precisa
+export const PRIMARY_MODEL = 'gemini-2.5-flash';
 
+// Rotação sequencial entre as chaves cadastradas
 let keyRotationIndex = 0;
 
 /**
- * Prompt com In-Context Learning (Few-Shot) e Auto-Verificação (Double Check)
+ * Normaliza e separa as chaves de API caso o usuário passe múltiplas separadas por vírgula ou ponto-e-vírgula.
  */
-const SYSTEM_PROMPT = `Você é um extrator de altíssima precisão especialista em HUDs de oficinas mecânicas do GTA RP / FiveM.
-
-INSTRUÇÃO PRINCIPAL:
-1. Localize a TABELA HORIZONTAL DA OFICINA no CENTRO da tela (cabeçalhos: Placa | Proprietário | Carro | Cor | Modificações | Fipe | IPVA | Multas).
-2. Extraia com precisão cirúrgica os dados da linha de dados localizada diretamente abaixo desses cabeçalhos.
-3. Retorne OBRIGATORIAMENTE apenas um objeto JSON com 3 campos:
-{"placa": "STRING", "proprietario": "STRING", "modelo": "STRING"}
-
-REGRAS DE LEITURA E DESAMBIGUAÇÃO (DOUBLE CHECK):
-- DOUBLE CHECK DE CARACTERES: Diferencie com rigor números de letras semelhantes (Ex: 'S60' e NUNCA 'SEO' ou 'S6O'; '0' vs 'O'; '1' vs 'I').
-- PRESERVAÇÃO DE HÍFENS: Mantenha sempre hífens originais de fábrica nos modelos (Ex: 'F-150 RAPTOR', 'F-250', 'GT-R', 'CX-5', 'AMG-GT', 'CR-V').
-- NOMES PRÓPRIOS: Transcreva nomes e sobrenomes compostos com precisão (Ex: 'Carlos Miguel' e NUNCA 'Conos Míguel'; 'Lucca Changretta'; 'Don Escobar'; 'Luiz Felipe').
-- PONTOS E TRAÇÕES: Mantenha pontos e trações de caminhões/utilitários (Ex: 'R780. 4X2', 'FH16 780').
-
-EXEMPLOS REAIS DE EXTRAÇÃO (IN-CONTEXT LEARNING):
-- HUD Volvo: Coluna Carro: "S60" | Coluna Proprietário: "Carlos Miguel" | Coluna Placa: "CST 2535" -> {"placa": "CST 2535", "proprietario": "Carlos Miguel", "modelo": "S60"}
-- HUD Picape Ford: Coluna Carro: "F-150 RAPTOR" | Coluna Proprietário: "Don Escobar" | Coluna Placa: "BRA 2E19" -> {"placa": "BRA 2E19", "proprietario": "Don Escobar", "modelo": "F-150 RAPTOR"}
-- HUD Caminhão Scania: Coluna Carro: "R780. 4X2" | Coluna Proprietário: "Lucca Changretta" | Coluna Placa: "TK 7809" -> {"placa": "TK 7809", "proprietario": "Lucca Changretta", "modelo": "R780. 4X2"}
-- HUD Clássico: Coluna Carro: "MAREA WEEKEND TURBO" | Coluna Proprietário: "Luiz Felipe" | Coluna Placa: "EBI 7783" -> {"placa": "EBI 7783", "proprietario": "Luiz Felipe", "modelo": "MAREA WEEKEND TURBO"}
-
-IGNORE TOTALMENTE:
-- Textos de cantos inferiores, resoluções de tela e marcas d'água.
-- Peças de motor e barra lateral esquerda.
-- IDs de jogador, relógio, data e dinheiro no topo da tela.`;
-
-/**
- * Retorna as chaves disponíveis, suportando pool de chaves separadas por vírgula no .env
- */
-export function parseApiKeys(keysString: string): string[] {
-  if (!keysString) return [];
-  return keysString
-    .split(',')
+export function parseApiKeys(input: string): string[] {
+  if (!input) return [];
+  return input
+    .split(/[,;\n\r]+/)
     .map((k) => k.trim())
-    .filter((k) => k.length > 0);
+    .filter((k) => k.length > 5);
 }
 
+const SYSTEM_PROMPT = `Você é um extrator de alta precisão especializado em HUDs de oficinas mecânicas do GTA RP / FiveM.
+Localize a TABELA HORIZONTAL no CENTRO da tela (cabeçalhos: Placa | Proprietário | Carro | Cor | Modificações | Fipe | IPVA | Multas).
+Extraia os dados da linha de dados abaixo dos cabeçalhos.
+Retorne OBRIGATORIAMENTE apenas um objeto JSON puro:
+{"placa": "STRING", "proprietario": "STRING", "modelo": "STRING"}`;
+
 /**
- * Executa uma requisição individual direta para a API Gemini
+ * Executa uma chamada direta e limpa para a API do Gemini.
  */
 async function executeGeminiRequest(
-  key: string,
+  apiKey: string,
   model: string,
-  compressed: { mimeType: string; base64Data: string },
+  compressed: { base64Data: string; mimeType: string },
   signal: AbortSignal,
   keySlotName?: string
 ): Promise<string> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
   const response = await fetch(url, {
     method: 'POST',
@@ -73,6 +47,7 @@ async function executeGeminiRequest(
     body: JSON.stringify({
       contents: [
         {
+          role: 'user',
           parts: [
             { text: SYSTEM_PROMPT },
             {
@@ -100,18 +75,15 @@ async function executeGeminiRequest(
       sendDiscordSystemAlert({
         errorType: 'Google Gemini Sobrecarregado (503 Service Unavailable)',
         keySlot: keySlotName || 'Chave do Pool',
-        message: 'Servidores de GPU do Google temporariamente em alta demanda. Alternando chave/provedor instantaneamente.',
+        message: 'Servidores de GPU do Google em alta demanda momentânea.',
         code: 503,
         mentionAdmin: false,
       });
-      const err: any = new Error('Google 503: Servidor temporariamente sobrecarregado');
-      err.status = 503;
-      throw err;
     } else if (response.status === 429) {
       sendDiscordSystemAlert({
         errorType: 'Cota de Requisições Atingida no Gemini (429)',
         keySlot: keySlotName || 'Chave do Pool',
-        message: 'Cota por minuto/dia atingida. Alternando automaticamente para a próxima chave de contingência.',
+        message: 'Cota por minuto/dia atingida. Alternando chave.',
         code: 429,
         mentionAdmin: false,
       });
@@ -125,7 +97,9 @@ async function executeGeminiRequest(
       });
     }
 
-    throw new Error(message);
+    const err: any = new Error(message);
+    err.status = response.status;
+    throw err;
   }
 
   const data = await response.json();
@@ -133,16 +107,13 @@ async function executeGeminiRequest(
   return rawContent;
 }
 
-export type GeminiProgressCallback = (
-  status: string,
-  progress: number,
-  badge?: string,
-  badgeType?: 'default' | 'hedge' | 'switch' | 'cloudflare' | 'success' | 'error'
-) => void;
+export type GeminiProgressCallback = (status: string, progress: number) => void;
 
 /**
- * Extração de alta velocidade com Hedged Racing (Corrida de Chaves com Aceleração a 2.5s)
- * e Auditoria Técnica de Slots de Chave com desvio instantâneo em 503.
+ * Extração sequencial robusta e sem desperdício de tokens:
+ * 1. Envia uma única requisição com timeout adequado de 25s (permitindo a IA responder sem cortes).
+ * 2. Somente em caso de erro real (503, 429, falha de rede), tenta a próxima chave do pool.
+ * 3. Se todas as chaves do Google falharem, propaga o erro para acionar a Cloudflare.
  */
 export async function extractWithGemini(
   imageDataUrl: string,
@@ -154,164 +125,46 @@ export async function extractWithGemini(
     throw new Error('Chave de API não configurada.');
   }
 
-  onStatusUpdate?.('Otimizando imagem para leitura ultra-rápida...', 25, 'Processando Imagem', 'default');
+  onStatusUpdate?.('Processando imagem com IA...', 30);
 
-  // 1. Pré-processar em Ultra-HD JPEG (1600px, 95% de qualidade)
+  // Pré-processamento em Ultra-HD JPEG
   const compressed = await compressImageForAi(imageDataUrl, 1600, 0.95, 'jpeg');
 
-  const idx1 = keyRotationIndex % keys.length;
-  const idx2 = (keyRotationIndex + 1) % keys.length;
-  const key1 = keys[idx1];
-  const key2 = keys[idx2];
-  const slotName1 = `Chave #${idx1 + 1} (Principal)`;
-  const slotName2 = `Chave #${idx2 + 1} (Reserva/Hedge)`;
+  const startIndex = keyRotationIndex % keys.length;
+  let lastError: any = null;
 
-  onStatusUpdate?.(`Processando com Gemini 3.5 (${slotName1})...`, 40, `Chave #${idx1 + 1}`, 'default');
+  // Tenta as chaves disponíveis de forma sequencial e paciente
+  for (let attempt = 0; attempt < keys.length; attempt++) {
+    const currentIdx = (startIndex + attempt) % keys.length;
+    const currentKey = keys[currentIdx];
+    const slotName = `Chave #${currentIdx + 1}${keys.length > 1 ? (attempt === 0 ? ' (Principal)' : ' (Reserva)') : ''}`;
 
-  // Se houver apenas 1 chave, executa chamada direta simples
-  if (keys.length === 1) {
+    if (attempt > 0) {
+      onStatusUpdate?.('Tentando chave reserva...', 50);
+    }
+
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 25000);
+    // Timeout paciente de 25 segundos para não matar requisições em andamento
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
+
     try {
-      const raw = await executeGeminiRequest(keys[0], PRIMARY_MODEL, compressed, controller.signal, 'Chave Única');
-      clearTimeout(timer);
-      return parseAndFormatResponse(raw, PRIMARY_MODEL, 'Chave Única (Personalizada)', false);
+      const raw = await executeGeminiRequest(currentKey, PRIMARY_MODEL, compressed, controller.signal, slotName);
+      clearTimeout(timeoutId);
+
+      // Avança a rotação para a próxima requisição
+      keyRotationIndex = (currentIdx + 1) % keys.length;
+
+      return parseAndFormatResponse(raw, PRIMARY_MODEL, slotName, attempt > 0);
     } catch (err: any) {
-      clearTimeout(timer);
-      throw err;
+      clearTimeout(timeoutId);
+      lastError = err;
+      console.warn(`[Gemini] Falha na ${slotName}:`, err?.message || err);
+      // Continua para a próxima chave do pool caso haja mais de uma
     }
   }
 
-  // CORRIDA INTELIGENTE DE CHAVES (Hedged Racing Calibrado para Latência de 2.5s com Desvio Imediato de 503):
-  const ctrl1 = new AbortController();
-  const ctrl2 = new AbortController();
-
-  let globalTimeout: ReturnType<typeof setTimeout> | undefined;
-  let hedgeTimer: ReturnType<typeof setTimeout> | undefined;
-
-  try {
-    let runP2Now: (() => void) | null = null;
-    let p1Rejected = false;
-    let p1Error: any = null;
-
-    const p1 = executeGeminiRequest(key1, PRIMARY_MODEL, compressed, ctrl1.signal, slotName1).then((raw) => ({
-      raw,
-      slot: slotName1,
-      hedged: false,
-    }));
-
-    const hedgedP2 = new Promise<{ raw: string; slot: string; hedged: boolean }>((resolve, reject) => {
-      let isExecuted = false;
-
-      const runP2 = async () => {
-        if (isExecuted || ctrl2.signal.aborted) return;
-        isExecuted = true;
-        try {
-          const raw2 = await executeGeminiRequest(key2, PRIMARY_MODEL, compressed, ctrl2.signal, slotName2);
-          resolve({ raw: raw2, slot: slotName2, hedged: true });
-        } catch (e: any) {
-          if (e.name === 'AbortError' || ctrl2.signal.aborted) {
-            return;
-          }
-          reject(e);
-        }
-      };
-
-      hedgeTimer = setTimeout(() => {
-        onStatusUpdate?.(`⚡ Demora no Google: Acionando ${slotName2} em paralelo...`, 55, 'Hedge Ativo', 'hedge');
-        runP2();
-      }, 2500);
-
-      runP2Now = () => {
-        if (hedgeTimer) clearTimeout(hedgeTimer);
-        runP2();
-      };
-
-      p1.then(() => {
-        if (hedgeTimer) clearTimeout(hedgeTimer);
-      }).catch((err) => {
-        p1Rejected = true;
-        p1Error = err;
-        if (hedgeTimer) clearTimeout(hedgeTimer);
-        const is503 = err?.status === 503 || err?.message?.includes('503') || err?.message?.includes('overloaded');
-        const is429 = err?.status === 429 || err?.message?.includes('429');
-        if (is503) {
-          onStatusUpdate?.(`⚠️ Google sobrecarregado (503). Alternando para ${slotName2}...`, 60, '503 Desvio', 'switch');
-        } else if (is429) {
-          onStatusUpdate?.(`⚠️ Cota atingida na Chave #${idx1 + 1}. Alternando para ${slotName2}...`, 60, 'Troca de Chave', 'switch');
-        } else {
-          onStatusUpdate?.(`⚠️ Oscilação na Chave #${idx1 + 1}. Alternando para ${slotName2}...`, 60, 'Troca de Chave', 'switch');
-        }
-        runP2();
-      });
-    });
-
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      globalTimeout = setTimeout(() => {
-        ctrl1.abort();
-        ctrl2.abort();
-        reject(new Error('Tempo limite de requisição excedido'));
-      }, 25000);
-    });
-
-    const safeP1 = p1
-      .then((r) => {
-        ctrl2.abort();
-        keyRotationIndex = (keyRotationIndex + 1) % keys.length;
-        return r;
-      })
-      .catch((err) => {
-        p1Rejected = true;
-        p1Error = err;
-        if (runP2Now) runP2Now();
-        return new Promise<{ raw: string; slot: string; hedged: boolean }>(() => {});
-      });
-
-    const safeP2 = hedgedP2
-      .then((r) => {
-        ctrl1.abort();
-        keyRotationIndex = (keyRotationIndex + 1) % keys.length;
-        return r;
-      })
-      .catch((err) => {
-        if (p1Rejected) {
-          throw new Error(`Ambas as chaves falharam. P1: ${p1Error?.message || 'erro'} | P2: ${err?.message || 'erro'}`);
-        }
-        return new Promise<{ raw: string; slot: string; hedged: boolean }>(() => {});
-      });
-
-    const winner = await Promise.race([safeP1, safeP2, timeoutPromise]);
-
-    if (globalTimeout) clearTimeout(globalTimeout);
-    if (hedgeTimer) clearTimeout(hedgeTimer);
-
-    return parseAndFormatResponse(winner.raw, PRIMARY_MODEL, winner.slot, winner.hedged);
-  } catch (err: any) {
-    if (globalTimeout) clearTimeout(globalTimeout);
-    if (hedgeTimer) clearTimeout(hedgeTimer);
-    ctrl1.abort();
-    ctrl2.abort();
-    console.warn('Falha na corrida principal 3.5, tentando fallback secundário:', err);
-
-    onStatusUpdate?.('🔄 Tentando modelo de contingência Gemini 3.1 Flash Lite...', 68, 'Gemini 3.1', 'switch');
-
-    // Fallback de emergência caso haja indisponibilidade global: direto no modelo 3.1 com timeout 8000ms
-    for (const model of FALLBACK_MODELS) {
-      for (let i = 0; i < keys.length; i++) {
-        const k = keys[i];
-        const slot = `Chave #${i + 1} (Fallback 3.1)`;
-        try {
-          const c = new AbortController();
-          const t = setTimeout(() => c.abort(), 8000);
-          const raw = await executeGeminiRequest(k, model, compressed, c.signal, slot);
-          clearTimeout(t);
-          return parseAndFormatResponse(raw, model, slot, false);
-        } catch (_) {}
-      }
-    }
-
-    throw err || new Error('Google Gemini indisponível.');
-  }
+  // Se todas as chaves do Google falharem, lança o erro para o App.tsx acionar a Cloudflare
+  throw lastError || new Error('Google Gemini indisponível.');
 }
 
 /**
@@ -349,51 +202,28 @@ function parseAndFormatResponse(
     }
   }
 
-  if (Array.isArray(parsed) && parsed.length > 0) {
-    parsed = parsed[0];
-  }
+  const rawPlaca = parsed.placa || '';
+  const rawProprietario = parsed.proprietario || '';
+  const rawModelo = parsed.modelo || parsed.carro || '';
 
-  const sanitizeNoise = (str: any) => {
-    if (!str || typeof str !== 'string') return '';
-    const trimmed = str.trim();
-    if (
-      trimmed === '...' ||
-      trimmed === '..' ||
-      trimmed === '.' ||
-      trimmed === 'valor da placa' ||
-      trimmed === 'valor do proprietario' ||
-      trimmed === 'valor do carro'
-    ) {
-      return '';
-    }
-    return trimmed;
-  };
+  const placa = formatPlate(rawPlaca);
+  const proprietario = formatOwner(rawProprietario);
+  const modelo = formatModel(rawModelo);
 
-  const rawPlaca = sanitizeNoise(parsed.placa);
-  const rawProp = sanitizeNoise(parsed.proprietario);
-  const rawMod = sanitizeNoise(parsed.modelo || parsed.carro);
-  const rawServ = sanitizeNoise(parsed.servico);
-
-  const placaFormatada = formatPlate(rawPlaca);
-  const proprietarioFormatado = formatOwner(rawProp);
-  const modeloFormatado = formatModel(rawMod);
-  const servicoFormatado = rawServ || 'Troca de óleo e filtro';
-
-  // Identifica campos faltantes para auditoria
   const missingFields: string[] = [];
-  if (!placaFormatada) missingFields.push('Placa');
-  if (!proprietarioFormatado) missingFields.push('Proprietário');
-  if (!modeloFormatado) missingFields.push('Modelo');
+  if (!placa) missingFields.push('Placa');
+  if (!proprietario) missingFields.push('Proprietário');
+  if (!modelo) missingFields.push('Modelo');
 
   return {
-    placa: placaFormatada,
-    proprietario: proprietarioFormatado,
-    modelo: modeloFormatado,
-    servico: servicoFormatado,
+    placa,
+    proprietario,
+    modelo,
+    servico: 'Troca de óleo e filtro',
+    rawText: rawContent,
     aiModel,
     keySlot,
-    hedged,
-    missingFields: missingFields.length > 0 ? missingFields : undefined,
-    rawText: rawContent,
+    hedged: !!hedged,
+    missingFields,
   };
 }

@@ -275,22 +275,18 @@ export default function App() {
       // Se tiver chave configurada, executar a IA diretamente em ~1.5s
       if (currentKey && currentKey.trim().length > 0) {
         setOcrProgress({
-          status: 'Iniciando leitura ultra-rápida com IA...',
-          progress: 20,
+          status: 'Lendo dados da ficha...',
+          progress: 25,
           stage: 'recognizing',
-          badge: 'Google Gemini',
-          badgeType: 'default',
         });
 
         try {
-          const result = await extractWithGemini(src, currentKey, (status, progress, badge, badgeType) => {
+          const result = await extractWithGemini(src, currentKey, (status, progress) => {
             if (activeProcessIdRef.current === currentProcessId) {
               setOcrProgress({
                 status,
                 progress,
                 stage: 'recognizing',
-                badge,
-                badgeType,
               });
             }
           });
@@ -300,7 +296,6 @@ export default function App() {
 
           const elapsedMs = Date.now() - startTime;
           const isComplete = validateVehicleData(result).isValid;
-          const displayModel = result.aiModel === 'gemini-3.5-flash-lite' ? 'Gemini 3.5 Flash Lite' : (result.aiModel || 'IA');
 
           const finalDataWithTiming: VehicleData = {
             ...result,
@@ -327,14 +322,12 @@ export default function App() {
 
           setOcrProgress({
             status: !isComplete
-              ? `⚠️ Ficha com campos incompletos (${displayModel}) - Preencha para copiar`
+              ? '⚠️ Ficha com campos incompletos - Preencha para copiar'
               : autoCopyRef.current
-              ? `✓ Concluído com ${displayModel} e copiado!`
-              : `✓ Extraído com ${displayModel}!`,
+              ? '✓ Concluído e copiado com sucesso!'
+              : '✓ Ficha extraída com sucesso!',
             progress: 100,
             stage: 'complete',
-            badge: displayModel,
-            badgeType: 'success',
           });
           setIsProcessing(false);
           return;
@@ -342,11 +335,9 @@ export default function App() {
           if (activeProcessIdRef.current !== currentProcessId) return;
           console.warn('Gemini indisponível, acionando contingência Cloudflare Llama 3.2 Vision:', geminiErr);
           setOcrProgress({
-            status: 'Google sobrecarregado (503/Timeout). Alternando para Cloudflare Llama 3.2 Vision...',
+            status: 'Conectando ao servidor reserva...',
             progress: 50,
             stage: 'recognizing',
-            badge: 'Cloudflare Vision',
-            badgeType: 'cloudflare',
           });
         }
       }
@@ -354,30 +345,17 @@ export default function App() {
       // Fallback de Contingência Total: Cloudflare Workers AI (Llama 3.2 11B Vision)
       try {
         setOcrProgress({
-          status: 'Processando com Cloudflare Llama 3.2 Vision...',
+          status: 'Processando com servidor reserva...',
           progress: 60,
           stage: 'recognizing',
-          badge: 'Cloudflare Vision',
-          badgeType: 'cloudflare',
         });
 
-        const result = await extractWithCloudflare(src, (_modelName, modelDisplay) => {
-          if (activeProcessIdRef.current === currentProcessId) {
-            setOcrProgress({
-              status: `Processando imagem com ${modelDisplay}...`,
-              progress: 75,
-              stage: 'recognizing',
-              badge: 'Llama 3.2 Vision',
-              badgeType: 'cloudflare',
-            });
-          }
-        });
+        const result = await extractWithCloudflare(src);
 
         if (activeProcessIdRef.current !== currentProcessId) return;
 
         const elapsedMs = Date.now() - startTime;
         const isComplete = validateVehicleData(result).isValid;
-        const displayModel = 'Cloudflare Llama 3.2 Vision';
 
         const finalDataWithTiming: VehicleData = {
           ...result,
@@ -412,14 +390,12 @@ export default function App() {
 
         setOcrProgress({
           status: !isComplete
-            ? `⚠️ Ficha com campos incompletos (${displayModel}) - Preencha para copiar`
+            ? '⚠️ Ficha com campos incompletos - Preencha para copiar'
             : autoCopyRef.current
-            ? `✓ Concluído com ${displayModel} e copiado!`
-            : `✓ Extraído com ${displayModel}!`,
+            ? '✓ Concluído e copiado com sucesso!'
+            : '✓ Ficha extraída com sucesso!',
           progress: 100,
           stage: 'complete',
-          badge: 'Cloudflare Vision',
-          badgeType: 'success',
         });
         setIsProcessing(false);
         return;
@@ -439,8 +415,6 @@ export default function App() {
           status: 'Falha na conexão com os servidores de IA.',
           progress: 0,
           stage: 'error',
-          badge: 'Falha Geral',
-          badgeType: 'error',
         });
         toast.error('Erro ao processar imagem com IA');
       } finally {
