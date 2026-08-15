@@ -95,20 +95,22 @@ async function executeGeminiRequest(
     const errorData = await response.json().catch(() => ({}));
     const message = errorData?.error?.message || `Erro ${response.status}: ${response.statusText}`;
 
-    // Alerta de B.O. imediato no Discord se bater Cota 429 ou Chave Inválida
+    // Alerta de log informativo no Discord se bater Cota 429 ou Alerta Crítico se for Chave Inválida
     if (response.status === 429) {
       sendDiscordSystemAlert({
-        errorType: 'Cota de Requisições Atingida (Rate Limit 429)',
+        errorType: 'Cota de Requisições Atingida no Gemini (429)',
         keySlot: keySlotName || 'Chave do Pool',
-        message: 'A cota por minuto/dia desta chave foi atingida. Alternando para a reserva.',
+        message: 'Cota por minuto/dia atingida. Alternando automaticamente para a próxima chave de contingência.',
         code: 429,
+        mentionAdmin: false,
       });
     } else if (response.status === 400 || response.status === 403) {
       sendDiscordSystemAlert({
-        errorType: `Erro de Autenticação (${response.status})`,
+        errorType: `Erro de Autenticação na Chave (${response.status})`,
         keySlot: keySlotName || 'Chave do Pool',
         message,
         code: response.status,
+        mentionAdmin: true,
       });
     }
 
@@ -134,15 +136,15 @@ export async function extractWithGemini(
     throw new Error('Chave de API não configurada.');
   }
 
-  // 1. Redimensionar e pré-processar em JPEG leve (1280px, 82% de qualidade ~35KB)
-  const compressed = await compressImageForAi(imageDataUrl, 1280, 0.82, 'jpeg');
+  // 1. Pré-processar em Ultra-HD JPEG (1600px, 95% de qualidade)
+  const compressed = await compressImageForAi(imageDataUrl, 1600, 0.95, 'jpeg');
 
   onModelAttempt?.(PRIMARY_MODEL, 'Gemini 3.5 Flash Lite');
 
   // Se houver apenas 1 chave, executa chamada direta simples
   if (keys.length === 1) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
+    const timer = setTimeout(() => controller.abort(), 25000);
     try {
       const raw = await executeGeminiRequest(keys[0], PRIMARY_MODEL, compressed, controller.signal, 'Chave Única');
       clearTimeout(timer);
@@ -282,14 +284,7 @@ export async function extractWithGemini(
       }
     }
 
-    // Se falhou totalmente, dispara Alerta de B.O. Crítico no Discord
-    sendDiscordSystemAlert({
-      errorType: 'Falha Total na Conexão com a IA (Fallback Local Necessário)',
-      keySlot: 'Todas as Chaves',
-      message: err?.message || 'Todas as tentativas de conexão com a API do Gemini falharam.',
-    });
-
-    throw err || new Error('Falha ao conectar com os servidores de IA.');
+    throw err || new Error('Google Gemini indisponível.');
   }
 }
 

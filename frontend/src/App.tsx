@@ -17,6 +17,7 @@ import { useAutoUpdate } from './hooks/useAutoUpdate';
 import { useDailyMetrics } from './hooks/useDailyMetrics';
 import { extractWithGemini } from './services/geminiService';
 import { extractWithCloudflare } from './services/cloudflareVisionService';
+import { sendDiscordSystemAlert } from './services/discordService';
 import { CURRENT_APP_VERSION } from './data/changelog';
 import {
   playSuccessChime,
@@ -379,6 +380,14 @@ export default function App() {
         addService(finalDataWithTiming, src);
         await performAutoCopy(result);
 
+        // Registra log informativo no Discord de que a contingência assumiu com sucesso
+        sendDiscordSystemAlert({
+          errorType: 'Contingência Ativada: Cloudflare Llama 3.2 Vision',
+          keySlot: 'Cloudflare Workers AI',
+          message: 'Google Gemini atingiu tempo limite ou indisponibilidade. A Cloudflare assumiu e extraiu os dados com sucesso.',
+          mentionAdmin: false,
+        });
+
         // Registra telemetria do dia
         logExtraction(isComplete, elapsedMs, 'cloudflare-llama-3.2-11b', result.placa, result.modelo);
 
@@ -403,6 +412,15 @@ export default function App() {
       } catch (err: any) {
         if (activeProcessIdRef.current !== currentProcessId) return;
         console.error('Erro na contingência Cloudflare Vision:', err);
+
+        // Alerta Crítico Real no Discord com menção ao administrador
+        sendDiscordSystemAlert({
+          errorType: 'Falha Total em Todas as IAs (Google Gemini e Cloudflare)',
+          keySlot: 'Todas as IAs',
+          message: err?.message || 'Nenhum dos servidores de IA conseguiu processar a imagem.',
+          mentionAdmin: true,
+        });
+
         setOcrProgress({
           status: 'Falha na conexão com os servidores de IA.',
           progress: 0,

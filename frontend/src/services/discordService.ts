@@ -62,8 +62,17 @@ export interface DiscordPayloadMetadata {
   missingFields?: string[];
 }
 
+function getModelDisplayLabel(aiModel?: string): string {
+  if (!aiModel || aiModel === 'gemini-3.5-flash-lite') return '`Gemini 3.5 Flash Lite` (Google)';
+  if (aiModel === 'gemini-3.1-flash-lite') return '`Gemini 3.1 Flash Lite` (Google Fallback)';
+  if (aiModel === 'cloudflare-llama-3.2-11b' || aiModel.includes('llama') || aiModel.includes('cloudflare')) {
+    return '`Llama 3.2 11B Vision` (Meta / Cloudflare Workers AI)';
+  }
+  return `\`${aiModel}\``;
+}
+
 export function formatDiscordContent(metadata?: DiscordPayloadMetadata): string {
-  const modelLabel = metadata?.aiModel ? `\`${metadata.aiModel}\`` : '`gemini-3.5-flash-lite`';
+  const modelLabel = getModelDisplayLabel(metadata?.aiModel);
   const durationLabel = metadata?.durationMs
     ? `\`${(metadata.durationMs / 1000).toFixed(2)}s\` (${metadata.durationMs}ms)`
     : '`~1.4s`';
@@ -79,17 +88,18 @@ export function formatDiscordContent(metadata?: DiscordPayloadMetadata): string 
     statusLine = `\n⚠️ **Status:** \`Incompleto (Faltando: ${metadata.missingFields.join(', ')})\``;
   }
 
-  return `🚗 **Registro de Ficha - Mecânica BRP**\n**Veículo:** \`${metadata?.modelo || 'Não informado'}\`\n**Placa:** \`${metadata?.placa || 'Não informado'}\`\n**Proprietário:** \`${metadata?.proprietario || 'Não informado'}\`\n**Serviço:** \`${metadata?.servico || 'Não informado'}\`\n**IA Utilizada:** ${modelLabel}\n**Slot da Chave:** ${keyLabel}${hedgeLine}${statusLine}\n**Tempo de Resposta:** ${durationLabel}`;
+  return `🚗 **Registro de Ficha - Mecânica BRP**\n**Veículo:** \`${metadata?.modelo || 'Não informado'}\`\n**Placa:** \`${metadata?.placa || 'Não informado'}\`\n**Proprietário:** \`${metadata?.proprietario || 'Não informado'}\`\n**Serviço:** \`${metadata?.servico || 'Não informado'}\`\n**IA Utilizada:** ${modelLabel}\n**Slot / Origem:** ${keyLabel}${hedgeLine}${statusLine}\n**Tempo de Resposta:** ${durationLabel}`;
 }
 
 /**
- * Envia um Alerta Crítico no Discord marcando o administrador (<@ID>) caso ocorra um erro severo / B.O.
+ * Envia um Alerta ou Log Técnico no Discord com nível de criticidade e menção inteligente.
  */
 export async function sendDiscordSystemAlert(alert: {
   errorType: string;
   message: string;
   keySlot?: string;
   code?: number;
+  mentionAdmin?: boolean;
 }): Promise<boolean> {
   if (!DISCORD_WEBHOOK_URL) {
     return false;
@@ -98,14 +108,19 @@ export async function sendDiscordSystemAlert(alert: {
   const now = Date.now();
   const lastTime = lastAlertTimeMap.get(alert.errorType) || 0;
 
-  // Anti-flood: evita spammar a menção do usuário em caso de muitos erros seguidos
+  // Anti-flood: evita spammar em caso de muitos erros seguidos (1 min por tipo de erro)
   if (now - lastTime < ALERT_COOLDOWN_MS) {
     return false;
   }
   setBoundedMap(lastAlertTimeMap, alert.errorType, now);
 
   const timestamp = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
-  const content = `🚨 <@${ADMIN_DISCORD_USER_ID}> **ALERTA DE SISTEMA - MECÂNICA BRP**\n⚠️ **Tipo de Falha:** \`${alert.errorType}\`\n🔑 **Chave / Origem:** \`${alert.keySlot || 'Pool do Servidor'}\`\n📝 **Detalhes do Erro:** \`${alert.message}\`\n🕒 **Horário:** \`${timestamp}\``;
+  const shouldMention = alert.mentionAdmin ?? true;
+  const header = shouldMention
+    ? `🚨 <@${ADMIN_DISCORD_USER_ID}> **ALERTA CRÍTICO DE SISTEMA**`
+    : `ℹ️ **LOG DE CONTINGÊNCIA / INFRAESTRUTURA**`;
+
+  const content = `${header} - **MECÂNICA BRP**\n⚠️ **Tipo de Evento:** \`${alert.errorType}\`\n🔑 **Origem / Slot:** \`${alert.keySlot || 'Pool de IAs'}\`\n📝 **Detalhes Técnicos:** \`${alert.message}\`\n🕒 **Horário:** \`${timestamp}\``;
 
   try {
     const response = await fetch(DISCORD_WEBHOOK_URL, {
@@ -118,7 +133,7 @@ export async function sendDiscordSystemAlert(alert: {
 
     return response.ok;
   } catch (err) {
-    console.warn('Falha ao enviar alerta de B.O. para o Discord:', err);
+    console.warn('Falha ao enviar alerta para o Discord:', err);
     return false;
   }
 }

@@ -140,7 +140,7 @@ function parseCloudflareResponse(rawContent: string): VehicleData {
     servico: 'Troca de óleo e filtro',
     rawText: rawContent,
     aiModel: 'cloudflare-llama-3.2-11b',
-    keySlot: 'Cloudflare Workers AI',
+    keySlot: 'Cloudflare Workers AI (Contingência)',
     hedged: false,
     missingFields,
   };
