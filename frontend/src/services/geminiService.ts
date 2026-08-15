@@ -134,16 +134,16 @@ export async function extractWithGemini(
 
   onStatusUpdate?.('Processando imagem com IA...', 30);
 
-  // Pré-processamento em Ultra-HD JPEG
-  const compressed = await compressImageForAi(imageDataUrl, 1600, 0.95, 'jpeg');
+  // Pré-processamento ultra-leve (1280px, 85% de qualidade -> ~40KB de payload)
+  const compressed = await compressImageForAi(imageDataUrl, 1280, 0.85, 'jpeg');
 
   const currentIdx = keyRotationIndex % keys.length;
   const currentKey = keys[currentIdx];
   const slotName = `Chave #${currentIdx + 1}${keys.length > 1 ? (currentIdx === 0 ? ' (Principal)' : ' (Reserva)') : ''}`;
 
   const controller = new AbortController();
-  // Timeout ágil de 8s: se o Google não responder, pula direto para a Cloudflare
-  const timeoutId = setTimeout(() => controller.abort(), 8000);
+  // Timeout calibrado de 14s: suficiente para conexões variáveis sem abortar chamadas ativas
+  const timeoutId = setTimeout(() => controller.abort(), 14000);
 
   try {
     const raw = await executeGeminiRequest(currentKey, PRIMARY_MODEL, compressed, controller.signal, slotName);
