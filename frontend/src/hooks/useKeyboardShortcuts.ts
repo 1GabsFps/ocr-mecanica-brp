@@ -66,9 +66,9 @@ export function useKeyboardShortcuts({
       const opts = optionsRef.current;
 
       // Atalho Secreto do Painel Admin (Ctrl + Shift + A) funciona sempre
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'A' || e.key === 'a' || e.code === 'KeyA')) {
         e.preventDefault();
-        opts.onOpenAdmin();
+        opts.onOpenAdmin?.();
         return;
       }
 
