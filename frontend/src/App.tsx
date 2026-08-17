@@ -16,6 +16,9 @@ import { useClipboardImage } from './hooks/useClipboardImage';
 import { useServiceHistory } from './hooks/useServiceHistory';
 import { useAutoUpdate } from './hooks/useAutoUpdate';
 import { useDailyMetrics } from './hooks/useDailyMetrics';
+import { useAuth } from './hooks/useAuth';
+import { MechanicUser } from './services/authService';
+import { SteamLoginGate } from './components/SteamLoginGate';
 import { useKeyboardShortcuts, ServiceMode } from './hooks/useKeyboardShortcuts';
 import { extractWithGemini } from './services/geminiService';
 import { extractWithCloudflare } from './services/cloudflareVisionService';
@@ -36,13 +39,14 @@ const DEFAULT_VEHICLE_DATA: VehicleData = {
   servico: 'Troca de óleo e filtro',
 };
 
-function getImageSignature(src: string): string {
-  const len = src.length;
-  const sample = src.slice(0, 80) + src.slice(-80);
-  return `${len}_${sample}`;
-}
-
 export default function App() {
+  // Autenticação Steam e Perfil do Mecânico
+  const { user, isAuthenticated, isLoading: isAuthLoading, authError, login, logout } = useAuth();
+  const userRef = useRef<MechanicUser | null>(user);
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
   // Monitoramento de novas versões para atualização automática
   useAutoUpdate();
 
@@ -134,6 +138,12 @@ export default function App() {
     }
   }, []);
 
+  const processImageOcrRef = useRef<(src: string) => Promise<void>>(async () => {});
+
+  const handleImageLoaded = useCallback((src: string) => {
+    processImageOcrRef.current(src);
+  }, []);
+
   // Gerenciamento de Imagem com Auto-Colar no foco (Alt+Tab)
   const {
     imageSrc,
@@ -145,7 +155,7 @@ export default function App() {
     handleDragLeave,
     handleDrop,
     resetImage,
-  } = useClipboardImage(autoPaste);
+  } = useClipboardImage(autoPaste, handleImageLoaded);
 
   const [vehicleData, setVehicleData] = useState<VehicleData>(DEFAULT_VEHICLE_DATA);
   const vehicleDataRef = useRef<VehicleData>(vehicleData);
@@ -168,15 +178,12 @@ export default function App() {
 
   const [showHistoryDrawer, setShowHistoryDrawer] = useState<boolean>(false);
 
-  // Timer de Debounce de 5 Segundos para edição no Discord (Proteção contra Rate Limit)
-  const serviceDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   // Flag para evitar reprocessar quando carregamos um item do histórico
   const isHistoryRestoreRef = useRef<boolean>(false);
 
-  // Assinatura do último print processado para evitar duplicatas acidentais
-  const lastProcessedSignatureRef = useRef<{ signature: string; timestamp: number; data: VehicleData } | null>(null);
-  const lastProcessedImageSrcRef = useRef<string | null>(null);
+  // Guarda de tempo de processamento recente
+  const lastProcessedTimeRef = useRef<number>(0);
+  const lastProcessedSrcRef = useRef<string>('');
 
   // Identificador de Processo Ativo e AbortController para prevenir Race Condition
   const activeProcessIdRef = useRef<number>(0);
@@ -220,11 +227,8 @@ export default function App() {
       activeAbortControllerRef.current.abort();
       activeAbortControllerRef.current = null;
     }
-    if (serviceDebounceTimerRef.current) {
-      clearTimeout(serviceDebounceTimerRef.current);
-    }
-    lastProcessedSignatureRef.current = null;
-    lastProcessedImageSrcRef.current = null;
+    lastProcessedTimeRef.current = 0;
+    lastProcessedSrcRef.current = '';
     playTrashSound();
     resetImage();
     setVehicleData(DEFAULT_VEHICLE_DATA);
@@ -279,20 +283,13 @@ export default function App() {
         return;
       }
 
-      // Trava Anti-Duplicidade: Se o mesmo print for colado nos últimos 45s, reaproveita dados
-      const signature = getImageSignature(src);
-      const last = lastProcessedSignatureRef.current;
-
-      if (last && last.signature === signature && Date.now() - last.timestamp < 45000) {
-        if (autoCopyRef.current && last.data) {
-          performAutoCopy(last.data);
-        }
-        toast.info('Print já processado recentemente', {
-          description: 'Ficha mantida sem consumo extra de IA.',
-          duration: 2500,
-        });
+      // Proteção de 800ms apenas para evitar duplo clique acidental no mesmo milissegundo
+      const now = Date.now();
+      if (now - lastProcessedTimeRef.current < 800 && lastProcessedSrcRef.current === src) {
         return;
       }
+      lastProcessedTimeRef.current = now;
+      lastProcessedSrcRef.current = src;
 
       // Cria novo identificador e cancela requisição anterior se existir
       const currentProcessId = ++activeProcessIdRef.current;
@@ -301,11 +298,6 @@ export default function App() {
       }
       const abortController = new AbortController();
       activeAbortControllerRef.current = abortController;
-
-      // Cancela qualquer timer de edição pendente do serviço anterior
-      if (serviceDebounceTimerRef.current) {
-        clearTimeout(serviceDebounceTimerRef.current);
-      }
 
       playPasteSound();
       const startTime = Date.now();
@@ -342,11 +334,11 @@ export default function App() {
           if (activeProcessIdRef.current !== currentProcessId) return;
 
           const elapsedMs = Date.now() - startTime;
-          const isComplete = validateVehicleData(result).isValid;
-
           const finalDataWithTiming: VehicleData = {
             ...result,
             durationMs: elapsedMs,
+            mechanicSteamHex: userRef.current?.steamHex,
+            mechanicName: userRef.current?.nome,
           };
 
           // 1. Atualização Instantânea da Interface e Auto-Copy (0ms de latência percebida)
@@ -359,15 +351,8 @@ export default function App() {
           addService(finalDataWithTiming, src);
           performAutoCopy(result);
 
-          // Registra assinatura para proteção anti-duplicidade
-          lastProcessedSignatureRef.current = {
-            signature,
-            timestamp: Date.now(),
-            data: finalDataWithTiming,
-          };
-
           setOcrProgress({
-            status: !isComplete
+            status: !validateVehicleData(result).isValid
               ? '⚠️ Ficha com campos incompletos - Preencha para copiar'
               : autoCopyRef.current
               ? '✓ Concluído e copiado com sucesso!'
@@ -378,7 +363,17 @@ export default function App() {
 
           // 2. Fire-and-Forget em background: Gravação no SQLite da VPS (Desacoplada da UI)
           setTimeout(() => {
-            logExtraction(isComplete, elapsedMs, result.aiModel || 'gemini-3.5-flash-lite', result.placa, result.modelo);
+            logExtraction(
+              validateVehicleData(result).isValid,
+              elapsedMs,
+              result.aiModel || 'gemini-3.5-flash-lite',
+              result.placa,
+              result.modelo,
+              result.servico || 'Troca de óleo e filtro',
+              'oleo',
+              userRef.current?.steamHex,
+              userRef.current?.nome
+            );
           }, 0);
 
           return;
@@ -406,11 +401,11 @@ export default function App() {
         if (activeProcessIdRef.current !== currentProcessId) return;
 
         const elapsedMs = Date.now() - startTime;
-        const isComplete = validateVehicleData(result).isValid;
-
         const finalDataWithTiming: VehicleData = {
           ...result,
           durationMs: elapsedMs,
+          mechanicSteamHex: userRef.current?.steamHex,
+          mechanicName: userRef.current?.nome,
         };
 
         // 1. Atualização Instantânea da Interface e Auto-Copy (0ms)
@@ -423,15 +418,8 @@ export default function App() {
         addService(finalDataWithTiming, src);
         performAutoCopy(result);
 
-        // Registra assinatura para proteção anti-duplicidade
-        lastProcessedSignatureRef.current = {
-          signature,
-          timestamp: Date.now(),
-          data: finalDataWithTiming,
-        };
-
         setOcrProgress({
-          status: !isComplete
+          status: !validateVehicleData(result).isValid
             ? '⚠️ Ficha com campos incompletos - Preencha para copiar'
             : autoCopyRef.current
             ? '✓ Concluído e copiado com sucesso!'
@@ -449,7 +437,17 @@ export default function App() {
             mentionAdmin: false,
           });
 
-          logExtraction(isComplete, elapsedMs, 'cloudflare-llama-3.2-11b', result.placa, result.modelo);
+          logExtraction(
+            validateVehicleData(result).isValid,
+            elapsedMs,
+            'cloudflare-llama-3.2-11b',
+            result.placa,
+            result.modelo,
+            result.servico || 'Troca de óleo e filtro',
+            'oleo',
+            userRef.current?.steamHex,
+            userRef.current?.nome
+          );
         }, 0);
 
         return;
@@ -482,20 +480,16 @@ export default function App() {
     [addService, logExtraction, performAutoCopy]
   );
 
-  // Processa automaticamente APENAS quando a imagem mudar
+  // Mantém a referência do processImageOcr sempre atualizada para o useClipboardImage
   useEffect(() => {
-    if (imageSrc && imageSrc !== lastProcessedImageSrcRef.current) {
-      lastProcessedImageSrcRef.current = imageSrc;
-      processImageOcr(imageSrc);
-    }
-  }, [imageSrc, processImageOcr]);
+    processImageOcrRef.current = processImageOcr;
+  }, [processImageOcr]);
 
   // Carregar um serviço anterior do histórico para o painel principal (usa a imagem HD do Discord)
   const handleSelectHistoryService = useCallback((item: ServiceHistoryItem) => {
     isHistoryRestoreRef.current = true;
     const bestImage = item.discordImageUrl || item.thumbnailUrl;
     if (bestImage) {
-      lastProcessedImageSrcRef.current = bestImage;
       setImageSrc(bestImage);
     }
     setVehicleData(item.vehicleData);
@@ -507,28 +501,26 @@ export default function App() {
     toast.info('Serviço carregado do histórico', { description: `${item.vehicleData.modelo} • ${item.vehicleData.placa}` });
   }, [setImageSrc]);
 
-  // Altera o serviço com Debounce de 5 Segundos (Protege contra Rate Limit do Discord)
-  const handleServicoChange = useCallback((newServico: string) => {
-    setVehicleData((prev) => {
-      const updated = { ...prev, servico: newServico };
-      vehicleDataRef.current = updated;
-      return updated;
-    });
+  // Altera o serviço e sincroniza o histórico e telemetria imediatamente
+  const handleServicoChange = useCallback(
+    (newServico: string) => {
+      setVehicleData((prev) => {
+        const updated = {
+          ...prev,
+          servico: newServico,
+          mechanicSteamHex: userRef.current?.steamHex,
+          mechanicName: userRef.current?.nome,
+        };
+        vehicleDataRef.current = updated;
+        updateCurrentServiceDetails(newServico, updated);
+        return updated;
+      });
+    },
+    [updateCurrentServiceDetails]
+  );
 
-    if (serviceDebounceTimerRef.current) {
-      clearTimeout(serviceDebounceTimerRef.current);
-    }
-
-    serviceDebounceTimerRef.current = setTimeout(() => {
-      updateCurrentServiceDetails(newServico, vehicleDataRef.current);
-    }, 5000);
-  }, [updateCurrentServiceDetails]);
-
-  // Quando o mecânico clica no botão "Copiar Texto", sincroniza o Discord imediatamente
+  // Quando o mecânico clica no botão "Copiar Texto", força flush imediato
   const handleManualCopyFlush = useCallback(() => {
-    if (serviceDebounceTimerRef.current) {
-      clearTimeout(serviceDebounceTimerRef.current);
-    }
     updateCurrentServiceDetails(vehicleData.servico, vehicleData);
   }, [updateCurrentServiceDetails, vehicleData]);
 
@@ -545,14 +537,11 @@ export default function App() {
   );
 
   useKeyboardShortcuts({
-    enabled: shortcutsEnabled,
+    enabled: shortcutsEnabled && isAuthenticated,
     hasImage: Boolean(imageSrc),
     onSwitchServiceMode: handleKeyboardServiceSwitch,
-    onCopyFormattedText: handleManualCopyFlush,
+    onCopyText: handleManualCopyFlush,
     onReset: handleFullReset,
-    onToggleHistory: () => setShowHistoryDrawer((prev) => !prev),
-    onToggleSettings: () => setShowSettingsModal((prev) => !prev),
-    onOpenAdmin: handleOpenAdmin,
   });
 
   const handleOpenSettings = useCallback(() => setShowSettingsModal(true), []);
@@ -569,7 +558,7 @@ export default function App() {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className="min-h-screen bg-[#0b0f19] text-slate-100 flex flex-col font-sans antialiased selection:bg-blue-600/30 selection:text-blue-200"
+      className="min-h-screen forged-carbon-bg text-slate-100 flex flex-col font-sans antialiased selection:bg-blue-600/30 selection:text-blue-200"
     >
       {/* Sistema de Toasts Elegantes Sonner */}
       <Toaster position="bottom-right" richColors theme="dark" closeButton />
@@ -583,66 +572,79 @@ export default function App() {
         onOpenHistory={handleOpenHistory}
         autoCopy={autoCopy}
         autoPaste={autoPaste}
+        user={user}
+        onLogout={logout}
       />
 
       {/* Conteúdo Principal */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col justify-start">
-        <div className="space-y-6">
-          
-          {/* Barra de Progresso quando estiver processando */}
-          {(isProcessing || ocrProgress.stage !== 'idle') && (
-            <OcrProgressBar progress={ocrProgress} isProcessing={isProcessing} />
-          )}
+        {isAuthLoading ? (
+          <div className="flex-1 flex flex-col items-center justify-center min-h-[50vh] text-center space-y-4">
+            <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-sm font-mono text-slate-400">Verificando autorização Steam...</p>
+          </div>
+        ) : !isAuthenticated ? (
+          /* Bloqueio de Acesso com Card Oficial Steam */
+          <SteamLoginGate onLogin={login} authError={authError} />
+        ) : (
+          /* Aplicação Completa Desbloqueada para o Mecânico */
+          <div className="space-y-6">
+            {/* Barra de Progresso quando estiver processando */}
+            {(isProcessing || ocrProgress.stage !== 'idle') && (
+              <OcrProgressBar progress={ocrProgress} isProcessing={isProcessing} />
+            )}
 
-          {!imageSrc ? (
-            /* Visualização Inicial: Área de Colar / Drag & Drop + Card de Estatísticas do Dia */
-            <div className="space-y-6">
-              <DropZone
-                onFileInputChange={handleFileInputChange}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                isDragging={isDragging}
-                error={error}
-              />
-
-              {/* Card de Métricas do Dia (Últimas 24h) */}
-              <DailyMetricsCard metrics={metrics} />
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {/* Linha 1: 2 Colunas Lado a Lado (Imagem Fixa + Dados Extraídos) */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-                {/* Coluna da Esquerda: Visualizador da Imagem com Zoom e Troca Direta */}
-                <div className="lg:col-span-7 xl:col-span-7 w-full">
-                  <ImageViewer
-                    imageSrc={imageSrc}
-                    onFileInputChange={handleFileInputChange}
-                  />
-                </div>
-
-                {/* Coluna da Direita: Painel de Dados Extraídos */}
-                <div className="lg:col-span-5 xl:col-span-5 w-full">
-                  <ResultPanel
-                    data={vehicleData}
-                    onDataChange={setVehicleData}
-                    onReset={handleFullReset}
-                    onOpenRawDrawer={handleOpenRawDrawer}
-                    onCopyComplete={handleManualCopyFlush}
-                  />
-                </div>
-              </div>
-
-              {/* Linha 2: Seção Inferior Dedicada de Peças & Modificações (Full Width) */}
-              <div className="w-full">
-                <PartsSelector
-                  currentServico={vehicleData.servico}
-                  onServicoChange={handleServicoChange}
+            {!imageSrc ? (
+              /* Visualização Inicial: Área de Colar / Drag & Drop + Card de Estatísticas do Dia */
+              <div className="space-y-6">
+                <DropZone
+                  onFileInputChange={handleFileInputChange}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  isDragging={isDragging}
+                  error={error}
                 />
+
+                {/* Card de Métricas do Dia (Últimas 24h) */}
+                <DailyMetricsCard metrics={metrics} />
               </div>
-            </div>
-          )}
-        </div>
+            ) : (
+              <div className="space-y-6">
+                {/* Linha 1: 2 Colunas Lado a Lado (Imagem Fixa + Dados Extraídos) */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+                  {/* Coluna da Esquerda: Visualizador da Imagem com Zoom e Troca Direta */}
+                  <div className="lg:col-span-7 xl:col-span-7 w-full">
+                    <ImageViewer
+                      imageSrc={imageSrc}
+                      onFileInputChange={handleFileInputChange}
+                      isScanning={isProcessing}
+                    />
+                  </div>
+
+                  {/* Coluna da Direita: Painel de Dados Extraídos */}
+                  <div className="lg:col-span-5 xl:col-span-5 w-full">
+                    <ResultPanel
+                      data={vehicleData}
+                      onDataChange={setVehicleData}
+                      onReset={handleFullReset}
+                      onOpenRawDrawer={handleOpenRawDrawer}
+                      onCopyComplete={handleManualCopyFlush}
+                    />
+                  </div>
+                </div>
+
+                {/* Linha 2: Seção Inferior Dedicada de Peças & Modificações (Full Width) */}
+                <div className="w-full">
+                  <PartsSelector
+                    currentServico={vehicleData.servico}
+                    onServicoChange={handleServicoChange}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </main>
 
       {/* Drawer do Histórico de Serviços (24 horas) */}
@@ -693,4 +695,3 @@ export default function App() {
     </div>
   );
 }
-
