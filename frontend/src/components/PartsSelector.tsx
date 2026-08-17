@@ -379,10 +379,15 @@ function parseServiceMode(currentServico: string): ServiceMode {
     s.includes('bloco') ||
     s.includes('pistão') ||
     s.includes('pistao') ||
+    s.includes('pistões') ||
+    s.includes('pistoes') ||
     s.includes('biela') ||
+    s.includes('bielas') ||
     s.includes('cabeçote') ||
     s.includes('cabecote') ||
     s.includes('virabrequim') ||
+    s.includes('cilindro') ||
+    s.includes('cilindros') ||
     s.includes('turbina')
   ) {
     return 'retifica';
@@ -396,7 +401,8 @@ function parseServiceMode(currentServico: string): ServiceMode {
     s.includes('dire') ||
     s.includes('slick') ||
     s.includes('drift') ||
-    s.includes('ceramic')
+    s.includes('ceramic') ||
+    s.includes('offroad')
   ) {
     return 'tuning';
   }
@@ -481,8 +487,15 @@ export const PartsSelector: React.FC<PartsSelectorProps> = memo(({
   const [tuningParts, setTuningParts] = useState<SelectedTuningParts>(() => parseTuningParts(currentServico));
   const [retificaParts, setRetificaParts] = useState<SelectedRetificaParts>(() => parseRetificaParts(currentServico));
 
-  // SINCRONIZAÇÃO EM TEMPO REAL: Ao alterar a prop currentServico (histórico / reset / OCR)
+  // Trava para evitar que alterações internas acionadas por cliques do usuário sejam sobrescritas pelo useEffect
+  const isInternalChangeRef = React.useRef<boolean>(false);
+
+  // SINCRONIZAÇÃO EXTERNA: Apenas quando currentServico mudar externamente (OCR / Histórico / Reset)
   useEffect(() => {
+    if (isInternalChangeRef.current) {
+      isInternalChangeRef.current = false;
+      return;
+    }
     setServiceMode(parseServiceMode(currentServico));
     setRemocaoPeca(parseRemocaoPeca(currentServico));
     setTuningParts(parseTuningParts(currentServico));
@@ -533,6 +546,25 @@ export const PartsSelector: React.FC<PartsSelectorProps> = memo(({
       if (baseItems.length === 0 && !isRemocao) {
         baseItems = ['Retífica de motor'];
       }
+    } else if (mode === 'extra') {
+      // Ao abrir a aba Extra, preserva o serviço base que o usuário já tinha selecionado
+      const hasRetifica = rParts.bloco || rParts.pistoes || rParts.bielas || rParts.cabecote || rParts.virabrequim || rParts.cilindros || rParts.turbina;
+      const hasTuning = tParts.freio || tParts.pneu || tParts.suspensao || tParts.direcao;
+
+      if (hasRetifica) {
+        if (rParts.bloco) baseItems.push(rParts.blocoCilindros === 4 ? 'Bloco do Motor' : `Bloco ${rParts.blocoCilindros} cilindros`);
+        if (rParts.pistoes) baseItems.push(rParts.pistoesOrigem === 'cliente' ? '(Pistão do cliente)' : 'Pistão original');
+        if (rParts.bielas) baseItems.push(rParts.bielasOrigem === 'cliente' ? '(Biela do cliente)' : 'Biela original');
+        if (rParts.cabecote) baseItems.push(rParts.cabecoteOrigem === 'cliente' ? '(Cabeçote do cliente)' : 'Cabeçote original');
+        if (rParts.virabrequim) baseItems.push('Virabrequim');
+        if (rParts.cilindros) baseItems.push('Cilindros');
+        if (rParts.turbina) baseItems.push('Turbina');
+      } else if (hasTuning) {
+        if (tParts.freio) baseItems.push(tParts.freio);
+        if (tParts.pneu) baseItems.push(tParts.pneu);
+        if (tParts.suspensao) baseItems.push(tParts.suspensao);
+        if (tParts.direcao) baseItems.push(tParts.direcao);
+      }
     }
 
     // Se a opção Extra de Remoção de Peça estiver ativa, concatena junto
@@ -540,6 +572,8 @@ export const PartsSelector: React.FC<PartsSelectorProps> = memo(({
     if (isRemocao && !finalItems.includes('Remoção de peça')) {
       finalItems.push('Remoção de peça');
     }
+
+    isInternalChangeRef.current = true;
 
     if (finalItems.length === 0) {
       onServicoChange(isRemocao ? 'Remoção de peça' : 'Troca de óleo e filtro');
@@ -562,7 +596,7 @@ export const PartsSelector: React.FC<PartsSelectorProps> = memo(({
     } else if (mode === 'retifica') {
       toast.info('Modo Retífica de Motor ativado');
     } else if (mode === 'extra') {
-      toast.info('Aba Extra aberta', { description: 'Remoção de peça pode ser combinada com qualquer aba.' });
+      toast.info('Aba Extra aberta', { description: 'Remoção de peça pode ser combinada com qualquer serviço.' });
     }
   };
 
