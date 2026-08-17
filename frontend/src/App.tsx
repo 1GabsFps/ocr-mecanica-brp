@@ -11,10 +11,12 @@ import { SettingsModal } from './components/SettingsModal';
 import { ChangelogModal } from './components/ChangelogModal';
 import { ServiceHistoryDrawer } from './components/ServiceHistoryDrawer';
 import { DailyMetricsCard } from './components/DailyMetricsCard';
+import { AdminDashboard } from './components/AdminDashboard';
 import { useClipboardImage } from './hooks/useClipboardImage';
 import { useServiceHistory } from './hooks/useServiceHistory';
 import { useAutoUpdate } from './hooks/useAutoUpdate';
 import { useDailyMetrics } from './hooks/useDailyMetrics';
+import { useKeyboardShortcuts, ServiceMode } from './hooks/useKeyboardShortcuts';
 import { extractWithGemini } from './services/geminiService';
 import { extractWithCloudflare } from './services/cloudflareVisionService';
 import { sendDiscordSystemAlert } from './services/discordService';
@@ -60,11 +62,30 @@ export default function App() {
     return localStorage.getItem('mec_auto_paste') !== 'false';
   });
 
+  const [shortcutsEnabled, setShortcutsEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('mec_shortcuts_enabled') !== 'false';
+  });
+
+  const [showAdminDashboard, setShowAdminDashboard] = useState<boolean>(() => {
+    return typeof window !== 'undefined' && window.location.hash === '#admin';
+  });
+
   // Modal de Changelog (Exibe automaticamente 1 vez a cada nova versão)
   const [showChangelogModal, setShowChangelogModal] = useState<boolean>(() => {
     const lastSeen = localStorage.getItem('mec_last_seen_version');
     return lastSeen !== CURRENT_APP_VERSION;
   });
+
+  // Escuta alteração da rota hash (#admin) para abrir o painel oculto
+  useEffect(() => {
+    const handleHashChange = () => {
+      if (window.location.hash === '#admin') {
+        setShowAdminDashboard(true);
+      }
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
 
   const handleToggleAutoCopy = useCallback(() => {
     setAutoCopy((prev) => {
@@ -85,6 +106,32 @@ export default function App() {
       }
       return next;
     });
+  }, []);
+
+  const handleToggleShortcuts = useCallback(() => {
+    setShortcutsEnabled((prev) => {
+      const next = !prev;
+      localStorage.setItem('mec_shortcuts_enabled', String(next));
+      if (next) {
+        toast.success('Atalhos de Teclado Ativados', {
+          description: 'Use 1..4 para abas, Enter para copiar e Esc para limpar.',
+        });
+      } else {
+        toast('Atalhos de Teclado Desativados');
+      }
+      return next;
+    });
+  }, []);
+
+  const handleOpenAdmin = useCallback(() => {
+    setShowAdminDashboard(true);
+  }, []);
+
+  const handleCloseAdmin = useCallback(() => {
+    setShowAdminDashboard(false);
+    if (window.location.hash === '#admin') {
+      history.replaceState(null, '', window.location.pathname);
+    }
   }, []);
 
   // Gerenciamento de Imagem com Auto-Colar no foco (Alt+Tab)
@@ -485,6 +532,29 @@ export default function App() {
     updateCurrentServiceDetails(vehicleData.servico, vehicleData);
   }, [updateCurrentServiceDetails, vehicleData]);
 
+  // Atalhos de Teclado Globais (Power User Mode)
+  const handleKeyboardServiceSwitch = useCallback(
+    (mode: ServiceMode) => {
+      if (mode === 'oleo') handleServicoChange('Troca de óleo e filtro');
+      else if (mode === 'tuning') handleServicoChange('Troca de peças de performance');
+      else if (mode === 'retifica') handleServicoChange('Retífica de motor');
+      else if (mode === 'extra') handleServicoChange('Remoção de peça');
+      toast.info(`Aba alterada via atalho: ${mode.toUpperCase()}`);
+    },
+    [handleServicoChange]
+  );
+
+  useKeyboardShortcuts({
+    enabled: shortcutsEnabled,
+    hasImage: Boolean(imageSrc),
+    onSwitchServiceMode: handleKeyboardServiceSwitch,
+    onCopyFormattedText: handleManualCopyFlush,
+    onReset: handleFullReset,
+    onToggleHistory: () => setShowHistoryDrawer((prev) => !prev),
+    onToggleSettings: () => setShowSettingsModal((prev) => !prev),
+    onOpenAdmin: handleOpenAdmin,
+  });
+
   const handleOpenSettings = useCallback(() => setShowSettingsModal(true), []);
   const handleCloseSettings = useCallback(() => setShowSettingsModal(false), []);
   const handleOpenHistory = useCallback(() => setShowHistoryDrawer(true), []);
@@ -593,10 +663,13 @@ export default function App() {
         onToggleAutoCopy={handleToggleAutoCopy}
         autoPaste={autoPaste}
         onToggleAutoPaste={handleToggleAutoPaste}
+        shortcutsEnabled={shortcutsEnabled}
+        onToggleShortcuts={handleToggleShortcuts}
         userKey={userApiKey}
         hasEnvKey={Boolean(envApiKey)}
         onSaveUserKey={handleSaveUserKey}
         onOpenChangelog={handleOpenChangelog}
+        onOpenAdmin={handleOpenAdmin}
       />
 
       {/* Modal Flutuante de Novidades e Changelog (v2.4.0) */}
@@ -610,6 +683,12 @@ export default function App() {
         isOpen={showRawDrawer}
         onClose={handleCloseRawDrawer}
         rawText={rawText}
+      />
+
+      {/* Painel Administrativo e Auditoria Oculto */}
+      <AdminDashboard
+        isOpen={showAdminDashboard}
+        onClose={handleCloseAdmin}
       />
     </div>
   );

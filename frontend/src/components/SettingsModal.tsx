@@ -9,6 +9,8 @@ import {
   Settings,
   Eye,
   EyeOff,
+  Keyboard,
+  ShieldAlert,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
@@ -22,10 +24,13 @@ interface SettingsModalProps {
   onToggleAutoCopy: () => void;
   autoPaste: boolean;
   onToggleAutoPaste: () => void;
+  shortcutsEnabled: boolean;
+  onToggleShortcuts: () => void;
   userKey: string;
   hasEnvKey: boolean;
   onSaveUserKey: (key: string) => void;
   onOpenChangelog?: () => void;
+  onOpenAdmin?: () => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -35,10 +40,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onToggleAutoCopy,
   autoPaste,
   onToggleAutoPaste,
+  shortcutsEnabled,
+  onToggleShortcuts,
   userKey,
   hasEnvKey,
   onSaveUserKey,
   onOpenChangelog,
+  onOpenAdmin,
 }) => {
   const [inputKey, setInputKey] = useState<string>('');
   const [showKey, setShowKey] = useState<boolean>(false);
@@ -248,7 +256,53 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </button>
           </div>
 
-          {/* 3. Seção: Novidades & Changelog */}
+          {/* 3. Opção: Atalhos de Teclado (Power User Mode) */}
+          <div className="bg-[#080d1a] border border-[#1e293b] rounded-xl p-4 flex items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-lg bg-emerald-950/80 border border-emerald-800/50 flex items-center justify-center shrink-0 mt-0.5">
+                <Keyboard className="w-4 h-4 text-emerald-400" />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-white uppercase tracking-wider">
+                    Atalhos de Teclado (Power User)
+                  </span>
+                  <span
+                    className={`text-[10px] font-mono font-bold px-1.5 py-0.2 rounded ${
+                      shortcutsEnabled ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/60' : 'bg-slate-900 text-slate-500'
+                    }`}
+                  >
+                    {shortcutsEnabled ? 'ON' : 'OFF'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  Teclas <span className="font-mono text-emerald-300 font-bold">1..4</span> para mudar abas, <span className="font-mono text-amber-300 font-bold">Enter</span> para copiar e <span className="font-mono text-rose-300 font-bold">Esc</span> para limpar.
+                </p>
+              </div>
+            </div>
+
+            {/* Toggle Switch */}
+            <button
+              type="button"
+              onClick={() => {
+                playToggleSound(!shortcutsEnabled);
+                onToggleShortcuts();
+              }}
+              className={`w-12 h-6.5 rounded-full p-1 transition-colors cursor-pointer shrink-0 border ${
+                shortcutsEnabled
+                  ? 'bg-emerald-600 border-emerald-500 justify-end'
+                  : 'bg-[#151e2e] border-[#24334a] justify-start'
+              } flex items-center`}
+            >
+              <motion.div
+                layout
+                transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                className="w-4.5 h-4.5 rounded-full bg-white shadow-md"
+              />
+            </button>
+          </div>
+
+          {/* 4. Seção: Novidades & Changelog */}
           <div className="bg-[#080d1a] border border-[#1e293b] rounded-xl p-4 flex items-center justify-between gap-4 hover:border-blue-900/60 transition-colors">
             <div className="flex items-start gap-3">
               <div className="w-9 h-9 rounded-lg bg-blue-950/80 border border-blue-800/50 flex items-center justify-center shrink-0 mt-0.5">
@@ -348,10 +402,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         {/* Rodapé */}
         <div className="bg-[#080d1a] border-t border-[#1e293b] px-5 py-3 flex items-center justify-between">
-          <span className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
-            <Sparkles className="w-3 h-3 text-blue-400" />
-            Configurações salvas permanentemente
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
+              <Sparkles className="w-3 h-3 text-blue-400" />
+              Preferências Salvas
+            </span>
+            {onOpenAdmin && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenAdmin();
+                }}
+                className="text-[10px] text-slate-500 hover:text-rose-400 transition-colors flex items-center gap-1 font-mono cursor-pointer"
+                title="Acessar Painel Master"
+              >
+                <ShieldAlert className="w-3 h-3" />
+                Painel Admin
+              </button>
+            )}
+          </div>
 
           <button
             type="button"

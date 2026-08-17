@@ -53,12 +53,20 @@ export function useDailyMetrics() {
   }, []);
 
   const logExtraction = useCallback(
-    async (success: boolean, durationMs: number, model = 'gemini-3.5-flash-lite', placa?: string, modelo?: string) => {
+    async (
+      success: boolean,
+      durationMs: number,
+      model = 'gemini-3.5-flash-lite',
+      placa?: string,
+      modelo?: string,
+      servico = 'Troca de óleo e filtro',
+      serviceMode = 'oleo'
+    ) => {
       // 1. Grava localmente como backup imediato
       recordOcrTelemetry(success, durationMs, model, placa, modelo);
 
       // 2. Envia para a VPS (Docker Telemetry Service) para somar no painel de todos
-      await sendServerTelemetry(success, durationMs, model, placa, modelo);
+      await sendServerTelemetry(success, durationMs, model, placa, modelo, servico, serviceMode);
 
       // 3. Atualiza os dados imediatamente na tela
       refreshMetrics();

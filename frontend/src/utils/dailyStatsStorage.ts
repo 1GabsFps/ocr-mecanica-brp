@@ -48,7 +48,9 @@ export async function sendServerTelemetry(
   durationMs: number,
   model = 'gemini-3.5-flash-lite',
   placa?: string,
-  modelo?: string
+  modelo?: string,
+  servico = 'Troca de óleo e filtro',
+  serviceMode = 'oleo'
 ): Promise<void> {
   try {
     await fetch('/api/telemetry', {
@@ -61,6 +63,8 @@ export async function sendServerTelemetry(
         model,
         placa,
         modelo,
+        servico,
+        serviceMode,
       }),
     });
   } catch (err) {

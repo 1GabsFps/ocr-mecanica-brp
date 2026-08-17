@@ -12,6 +12,7 @@ import { uploadImageToDiscord, updateDiscordMessage } from '../services/discordS
 export function useServiceHistory() {
   const [history, setHistory] = useState<ServiceHistoryItem[]>(() => loadHistory());
   const activeItemIdRef = useRef<string | null>(null);
+  const pendingDiscordUpdatesRef = useRef<Map<string, any>>(new Map());
 
   // Atualiza e limpa expirados a cada carregamento ou a cada 10 minutos
   useEffect(() => {
@@ -75,6 +76,13 @@ export function useServiceHistory() {
               saveHistory(updated);
               return updated;
             });
+
+            // Se o usuário já alterou o serviço enquanto o upload estava em andamento, sincroniza imediatamente
+            const pendingPayload = pendingDiscordUpdatesRef.current.get(itemId);
+            if (pendingPayload && discordResult.messageId) {
+              updateDiscordMessage(discordResult.messageId, pendingPayload);
+              pendingDiscordUpdatesRef.current.delete(itemId);
+            }
           }
         });
       }, 350);
@@ -141,9 +149,36 @@ export function useServiceHistory() {
       return updated;
     });
 
-    // EFEITO COLATERAL PURO: Executado FORA do updater funcional do React
-    if (targetMessageId && targetPayload) {
-      updateDiscordMessage(targetMessageId, targetPayload);
+    // EFEITO COLATERAL: Se já tiver o messageId, atualiza o Discord. Senão, guarda na fila pendente.
+    if (targetPayload) {
+      if (targetMessageId) {
+        updateDiscordMessage(targetMessageId, targetPayload);
+      } else {
+        pendingDiscordUpdatesRef.current.set(currentId, targetPayload);
+      }
+
+      // Sincronização em Segundo Plano com o Banco de Dados SQLite VPS
+      const s = newServico.toLowerCase();
+      let calculatedMode = 'oleo';
+      if (s.includes('retifica') || s.includes('retífica') || s.includes('bloco') || s.includes('pist') || s.includes('biela') || s.includes('cabeçote') || s.includes('cabecote')) {
+        calculatedMode = 'retifica';
+      } else if (s.includes('performance') || s.includes('tuning') || s.includes('freio') || s.includes('pneu') || s.includes('suspens') || s.includes('dire')) {
+        calculatedMode = 'tuning';
+      } else if (s.includes('remocao') || s.includes('remoção')) {
+        calculatedMode = 'extra';
+      }
+
+      fetch('/api/telemetry/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          placa: targetPayload.placa,
+          servico: newServico,
+          serviceMode: calculatedMode
+        })
+      }).catch(() => {
+        // Falhas de rede de telemetria não bloqueiam a UI
+      });
     }
   }, []);
 
