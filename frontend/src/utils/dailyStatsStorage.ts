@@ -50,7 +50,9 @@ export async function sendServerTelemetry(
   placa?: string,
   modelo?: string,
   servico = 'Troca de óleo e filtro',
-  serviceMode = 'oleo'
+  serviceMode = 'oleo',
+  mechanicSteamHex?: string,
+  mechanicName?: string
 ): Promise<void> {
   try {
     await fetch('/api/telemetry', {
@@ -65,6 +67,8 @@ export async function sendServerTelemetry(
         modelo,
         servico,
         serviceMode,
+        mechanicSteamHex,
+        mechanicName,
       }),
     });
   } catch (err) {
