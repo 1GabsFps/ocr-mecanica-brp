@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { ShieldAlert, Wrench, Lock, Zap, Award, Sparkles } from 'lucide-react';
+import { ShieldAlert, Wrench, Lock } from 'lucide-react';
 
 interface SteamLoginGateProps {
   onLogin: () => void;
@@ -34,10 +34,10 @@ export const SteamLoginGate: React.FC<SteamLoginGateProps> = ({
 
         {/* Título & Descrição */}
         <h1 className="text-xl sm:text-2xl font-black text-white uppercase tracking-wider mb-2">
-          Mecânica BRP • Acesso Restrito
+          Mecânica BRP
         </h1>
         <p className="text-xs sm:text-sm text-slate-400 max-w-md mx-auto leading-relaxed mb-6">
-          O leitor OCR inteligente é exclusivo para os membros autorizados da oficina. Faça login com a sua conta Steam para liberar a ferramenta.
+          Leitor OCR inteligente para a mecanica do brasilia roleplay
         </p>
 
         {/* Alerta de Erro de Autorização */}
@@ -72,22 +72,6 @@ export const SteamLoginGate: React.FC<SteamLoginGateProps> = ({
             </svg>
             <span>{isLoading ? 'Conectando à Steam...' : 'Entrar com a Steam'}</span>
           </button>
-        </div>
-
-        {/* Badges de Benefícios */}
-        <div className="mt-8 pt-6 border-t border-slate-800/60 grid grid-cols-3 gap-2 text-[10px] sm:text-xs text-slate-400 font-mono">
-          <div className="flex flex-col items-center gap-1">
-            <Zap className="w-4 h-4 text-amber-400" />
-            <span>OCR em ~1.4s</span>
-          </div>
-          <div className="flex flex-col items-center gap-1">
-            <Award className="w-4 h-4 text-blue-400" />
-            <span>Ranking Diário</span>
-          </div>
-          <div className="flex flex-col items-center gap-1">
-            <Sparkles className="w-4 h-4 text-emerald-400" />
-            <span>Sync Discord</span>
-          </div>
         </div>
       </motion.div>
     </div>
