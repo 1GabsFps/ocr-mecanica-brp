@@ -662,11 +662,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ isOpen, onClose 
                           />
                         )}
 
-                        {/* Ponto Pulsante de Pico */}
+                        {/* Ponto de Pico */}
                         {peakPoint.count > 0 && (
                           <g>
-                            <circle cx={peakPoint.x} cy={peakPoint.y} r="8" fill="#38bdf8" opacity="0.3" className="animate-ping" />
-                            <circle cx={peakPoint.x} cy={peakPoint.y} r="4.5" fill="#ffffff" stroke="#0284c7" strokeWidth="2" />
+                            <circle cx={peakPoint.x} cy={peakPoint.y} r="6" fill="#38bdf8" opacity="0.3" />
+                            <circle cx={peakPoint.x} cy={peakPoint.y} r="4" fill="#ffffff" stroke="#0284c7" strokeWidth="2" />
                           </g>
                         )}
 
