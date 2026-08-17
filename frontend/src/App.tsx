@@ -536,14 +536,6 @@ export default function App() {
     [handleServicoChange]
   );
 
-  useKeyboardShortcuts({
-    enabled: shortcutsEnabled && isAuthenticated,
-    hasImage: Boolean(imageSrc),
-    onSwitchServiceMode: handleKeyboardServiceSwitch,
-    onCopyText: handleManualCopyFlush,
-    onReset: handleFullReset,
-  });
-
   const handleOpenSettings = useCallback(() => setShowSettingsModal(true), []);
   const handleCloseSettings = useCallback(() => setShowSettingsModal(false), []);
   const handleOpenHistory = useCallback(() => setShowHistoryDrawer(true), []);
@@ -552,6 +544,29 @@ export default function App() {
   const handleCloseRawDrawer = useCallback(() => setShowRawDrawer(false), []);
   const handleOpenChangelog = useCallback(() => setShowChangelogModal(true), []);
   const handleCloseChangelog = useCallback(() => setShowChangelogModal(false), []);
+
+  // Atalho Global Direto para o Painel Administrativo (Ctrl + Shift + A)
+  useEffect(() => {
+    const handleGlobalAdminShortcut = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'A' || e.key === 'a' || e.code === 'KeyA')) {
+        e.preventDefault();
+        setShowAdminDashboard(true);
+      }
+    };
+    window.addEventListener('keydown', handleGlobalAdminShortcut);
+    return () => window.removeEventListener('keydown', handleGlobalAdminShortcut);
+  }, []);
+
+  useKeyboardShortcuts({
+    enabled: shortcutsEnabled && isAuthenticated,
+    hasImage: Boolean(imageSrc),
+    onSwitchServiceMode: handleKeyboardServiceSwitch,
+    onCopyFormattedText: handleManualCopyFlush,
+    onReset: handleFullReset,
+    onToggleHistory: handleOpenHistory,
+    onToggleSettings: handleOpenSettings,
+    onOpenAdmin: handleOpenAdmin,
+  });
 
   return (
     <div
