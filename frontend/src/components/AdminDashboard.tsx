@@ -271,10 +271,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ isOpen, onClose 
     const maxVal = Math.max(...hourly.map((h) => h.count), 1);
 
     const svgWidth = 800;
-    const svgHeight = 160;
+    const svgHeight = 170;
     const paddingX = 35;
-    const paddingTop = 25;
-    const paddingBottom = 25;
+    const paddingTop = 38;
+    const paddingBottom = 32;
     const usableWidth = svgWidth - paddingX * 2;
     const usableHeight = svgHeight - paddingTop - paddingBottom;
 
@@ -624,8 +624,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ isOpen, onClose 
                       <span className="text-[11px] font-mono text-slate-400">00:00 às 23:00 (BRT)</span>
                     </div>
 
-                    <div className="relative w-full h-44 bg-slate-950/70 border border-slate-800/70 rounded-xl p-2 overflow-hidden select-none">
-                      <svg viewBox="0 0 800 160" preserveAspectRatio="none" className="w-full h-full">
+                    <div className="relative w-full h-48 bg-slate-950/70 border border-slate-800/70 rounded-xl p-2 select-none">
+                      <svg viewBox="0 0 800 170" preserveAspectRatio="none" className="w-full h-full">
                         <defs>
                           <linearGradient id="adminPeakLine" x1="0" y1="0" x2="1" y2="0">
                             <stop offset="0%" stopColor="#3b82f6" />
@@ -642,9 +642,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ isOpen, onClose 
                         </defs>
 
                         {/* Grid Horizontal */}
-                        <line x1="35" y1="30" x2="765" y2="30" stroke="#334155" strokeDasharray="3 3" strokeOpacity="0.35" />
-                        <line x1="35" y1="80" x2="765" y2="80" stroke="#334155" strokeDasharray="3 3" strokeOpacity="0.35" />
-                        <line x1="35" y1="135" x2="765" y2="135" stroke="#334155" strokeOpacity="0.6" />
+                        <line x1="35" y1="38" x2="765" y2="38" stroke="#334155" strokeDasharray="3 3" strokeOpacity="0.35" />
+                        <line x1="35" y1="88" x2="765" y2="88" stroke="#334155" strokeDasharray="3 3" strokeOpacity="0.35" />
+                        <line x1="35" y1="138" x2="765" y2="138" stroke="#334155" strokeOpacity="0.6" />
+
+                        {/* Ticks de Horário no Eixo X */}
+                        <g className="text-[9px] fill-slate-500 font-mono select-none" textAnchor="middle">
+                          <text x="35" y="156">00:00</text>
+                          <text x="160" y="156">04:00</text>
+                          <text x="290" y="156">08:00</text>
+                          <text x="415" y="156">12:00</text>
+                          <text x="545" y="156">16:00</text>
+                          <text x="670" y="156">20:00</text>
+                          <text x="765" y="156">23:00</text>
+                        </g>
 
                         {/* Área Sombreada */}
                         {areaPath && <path d={areaPath} fill="url(#adminPeakArea)" />}
@@ -687,18 +698,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ isOpen, onClose 
                         ))}
                       </svg>
 
-                      {/* Tooltip Dinâmico */}
+                      {/* Tooltip Dinâmico Inteligente (Sem Clipping de Topo/Laterais) */}
                       {hoveredPoint && (
                         <div
-                          className="absolute pointer-events-none z-20 px-2.5 py-1 rounded bg-slate-900/95 border border-cyan-500/50 shadow-xl text-center backdrop-blur-md"
+                          className="absolute pointer-events-none z-30 px-2.5 py-1.5 rounded-lg bg-slate-900/95 border border-cyan-500/60 shadow-2xl text-center backdrop-blur-md transition-transform duration-75"
                           style={{
-                            left: `${(hoveredPoint.x / 800) * 100}%`,
-                            top: `${Math.max(10, (hoveredPoint.y / 160) * 100 - 30)}%`,
-                            transform: 'translate(-50%, -100%)',
+                            left: `${Math.min(91, Math.max(9, (hoveredPoint.x / 800) * 100))}%`,
+                            top: `${(hoveredPoint.y / 170) * 100}%`,
+                            transform: hoveredPoint.y < 70 ? 'translate(-50%, 14px)' : 'translate(-50%, calc(-100% - 12px))',
                           }}
                         >
-                          <div className="text-[10px] font-mono text-cyan-300 font-bold">{hoveredPoint.hour}</div>
-                          <div className="text-xs font-black text-white">{hoveredPoint.count} fichas</div>
+                          <div className="text-[10px] font-mono text-cyan-300 font-bold leading-tight">{hoveredPoint.hour}</div>
+                          <div className="text-xs font-black text-white leading-tight">{hoveredPoint.count} {hoveredPoint.count === 1 ? 'ficha' : 'fichas'}</div>
                         </div>
                       )}
                     </div>
