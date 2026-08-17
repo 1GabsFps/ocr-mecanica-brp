@@ -402,26 +402,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         {/* Rodapé */}
         <div className="bg-[#080d1a] border-t border-[#1e293b] px-5 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
-              <Sparkles className="w-3 h-3 text-blue-400" />
-              Preferências Salvas
-            </span>
-            {onOpenAdmin && (
-              <button
-                type="button"
-                onClick={() => {
-                  onClose();
-                  onOpenAdmin();
-                }}
-                className="text-[10px] text-slate-500 hover:text-rose-400 transition-colors flex items-center gap-1 font-mono cursor-pointer"
-                title="Acessar Painel Master"
-              >
-                <ShieldAlert className="w-3 h-3" />
-                Painel Admin
-              </button>
-            )}
-          </div>
+          <span className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
+            <Sparkles className="w-3 h-3 text-blue-400" />
+            Configurações salvas permanentemente
+          </span>
 
           <button
             type="button"

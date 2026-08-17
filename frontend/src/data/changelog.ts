@@ -19,7 +19,7 @@ export const CHANGELOG_DATA: ChangelogRelease[] = [
     version: '2.6.0',
     tag: 'Atual',
     date: '17/08/2026',
-    title: 'Atalhos de Teclado, Modo PWA Instalável e Painel Administrativo Master',
+    title: 'Atalhos de Teclado, Modo PWA Instalável e Otimizações de Alta Velocidade',
     items: [
       {
         title: 'Atalhos de Teclado (Power User)',
@@ -32,14 +32,14 @@ export const CHANGELOG_DATA: ChangelogRelease[] = [
         type: 'feature',
       },
       {
-        title: 'Painel Administrativo & Estatísticas',
-        description: 'Gráficos de horários de pico, volume de serviços e tabela de auditoria em tempo real com exportação de relatórios CSV.',
-        type: 'feature',
-      },
-      {
         title: 'Sincronização Resiliente de Serviços',
         description: 'Garante que alterações feitas durante o processamento da imagem sejam salvas no Discord e registradas no banco de dados.',
         type: 'improvement',
+      },
+      {
+        title: 'Calibração de Resposta Rápida',
+        description: 'Transição ultrarrápida entre abas com salvamento instantâneo de peças e configurações da ficha.',
+        type: 'performance',
       },
     ],
   },

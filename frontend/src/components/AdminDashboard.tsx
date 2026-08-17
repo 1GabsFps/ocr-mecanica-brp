@@ -62,9 +62,13 @@ interface AdminDashboardProps {
 }
 
 const AUTH_STORAGE_KEY = 'mec_admin_auth_token';
+const SECRET_STORAGE_KEY = 'mec_admin_secret_token';
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ isOpen, onClose }) => {
   const [password, setPassword] = useState('');
+  const [adminSecret, setAdminSecret] = useState<string>(() => {
+    return sessionStorage.getItem(SECRET_STORAGE_KEY) || '';
+  });
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     return sessionStorage.getItem(AUTH_STORAGE_KEY) === 'true';
   });
@@ -84,6 +88,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ isOpen, onClose 
       if (res.status === 401) {
         setIsAuthenticated(false);
         sessionStorage.removeItem(AUTH_STORAGE_KEY);
+        sessionStorage.removeItem(SECRET_STORAGE_KEY);
+        setAdminSecret('');
         toast.error('Senha de administrador incorreta.');
         return;
       }
@@ -95,7 +101,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ isOpen, onClose 
       const data: AdminDashboardData = await res.json();
       setAdminData(data);
       setIsAuthenticated(true);
+      setAdminSecret(secret);
       sessionStorage.setItem(AUTH_STORAGE_KEY, 'true');
+      sessionStorage.setItem(SECRET_STORAGE_KEY, secret);
     } catch (err: any) {
       toast.error('Erro ao carregar telemetria da VPS: ' + (err.message || ''));
     } finally {
@@ -104,10 +112,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ isOpen, onClose 
   }, []);
 
   useEffect(() => {
-    if (isOpen && isAuthenticated) {
-      fetchAdminData('neco2026');
+    if (isOpen && isAuthenticated && adminSecret) {
+      fetchAdminData(adminSecret);
     }
-  }, [isOpen, isAuthenticated, fetchAdminData]);
+  }, [isOpen, isAuthenticated, adminSecret, fetchAdminData]);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -121,6 +129,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ isOpen, onClose 
   const handleLogout = () => {
     setIsAuthenticated(false);
     sessionStorage.removeItem(AUTH_STORAGE_KEY);
+    sessionStorage.removeItem(SECRET_STORAGE_KEY);
+    setAdminSecret('');
     setPassword('');
     setAdminData(null);
     toast.info('Sessão administrativa encerrada.');

@@ -8,7 +8,7 @@ from urllib.parse import urlparse, parse_qs
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 DB_PATH = os.environ.get('DB_PATH', '/app/data/telemetry.db')
-ADMIN_SECRET = os.environ.get('ADMIN_SECRET', 'neco2026')
+ADMIN_SECRET = os.environ.get('ADMIN_SECRET', 'brpmecadm')
 BRT_TZ = datetime.timezone(datetime.timedelta(hours=-3))
 
 def get_operational_day_start_ms():
