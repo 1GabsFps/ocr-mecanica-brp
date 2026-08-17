@@ -12,12 +12,40 @@ export interface ChangelogRelease {
   items: ChangelogItem[];
 }
 
-export const CURRENT_APP_VERSION = '2.5.0';
+export const CURRENT_APP_VERSION = '2.6.0';
 
 export const CHANGELOG_DATA: ChangelogRelease[] = [
   {
-    version: '2.5.0',
+    version: '2.6.0',
     tag: 'Atual',
+    date: '17/08/2026',
+    title: 'Atalhos de Teclado, Modo PWA Instalável e Painel Administrativo Master',
+    items: [
+      {
+        title: 'Atalhos de Teclado (Power User)',
+        description: 'Alterne abas usando as teclas 1, 2, 3 e 4, copie a ficha com Enter e limpe a tela com Esc, com trava inteligente ao digitar.',
+        type: 'feature',
+      },
+      {
+        title: 'Modo Aplicativo PWA',
+        description: 'Instale o leitor diretamente no Windows, Android ou iOS como um aplicativo nativo e rápido sem barra de navegação.',
+        type: 'feature',
+      },
+      {
+        title: 'Painel Administrativo & Estatísticas',
+        description: 'Gráficos de horários de pico, volume de serviços e tabela de auditoria em tempo real com exportação de relatórios CSV.',
+        type: 'feature',
+      },
+      {
+        title: 'Sincronização Resiliente de Serviços',
+        description: 'Garante que alterações feitas durante o processamento da imagem sejam salvas no Discord e registradas no banco de dados.',
+        type: 'improvement',
+      },
+    ],
+  },
+  {
+    version: '2.5.0',
+    tag: 'Anterior',
     date: '14/08/2026',
     title: 'Contingência Multimodal Cloudflare Llama 3.2 Vision e Resiliência Total',
     items: [
