@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ShieldAlert,
@@ -17,6 +17,13 @@ import {
   CheckCircle2,
   AlertTriangle,
   Search,
+  Award,
+  Users,
+  BarChart3,
+  FileText,
+  Flame,
+  UserCheck,
+  RotateCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { playChipSelectSound } from '../utils/soundEffects';
@@ -29,7 +36,40 @@ interface AdminSummary {
   fastestDurationSec: number;
 }
 
-interface AdminLogItem {
+interface ServiceBreakdown {
+  oleo: number;
+  tuning: number;
+  retifica: number;
+  extra: number;
+}
+
+interface HourlyData {
+  hour: string;
+  count: number;
+}
+
+export interface MechanicRankingItem {
+  steamHex: string;
+  nome: string;
+  avatarUrl: string;
+  totalFichas: number;
+  totalOleo: number;
+  totalTuning: number;
+  totalRetifica: number;
+  totalExtra: number;
+  hojeFichas: number;
+  semanaFichas: number;
+}
+
+export interface FuncionarioItem {
+  steamHex: string;
+  nome: string;
+  avatarUrl: string;
+  ativo: boolean;
+  lastSyncedAt: number;
+}
+
+interface ExtractionLog {
   id: number;
   timestamp: number;
   dateTimeStr: string;
@@ -41,19 +81,18 @@ interface AdminLogItem {
   modelo: string;
   servico: string;
   serviceMode: string;
+  mechanicName?: string;
+  mechanicSteamHex?: string;
 }
 
-interface AdminDashboardData {
+export interface AdminDashboardData {
   summary: AdminSummary;
-  serviceBreakdown: {
-    oleo: number;
-    tuning: number;
-    retifica: number;
-    extra: number;
-  };
+  serviceBreakdown: ServiceBreakdown;
   modelBreakdown: Record<string, number>;
-  hourly: Array<{ hour: string; count: number }>;
-  recentLogs: AdminLogItem[];
+  hourly: HourlyData[];
+  ranking: MechanicRankingItem[];
+  funcionarios: FuncionarioItem[];
+  recentLogs: ExtractionLog[];
 }
 
 interface AdminDashboardProps {
@@ -63,6 +102,9 @@ interface AdminDashboardProps {
 
 const AUTH_STORAGE_KEY = 'mec_admin_auth_token';
 const SECRET_STORAGE_KEY = 'mec_admin_secret_token';
+
+type AdminTab = 'kpis' | 'ranking' | 'logs' | 'funcionarios';
+type RankingPeriod = 'hoje' | 'semana' | 'geral';
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ isOpen, onClose }) => {
   const [password, setPassword] = useState('');
@@ -74,8 +116,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ isOpen, onClose 
   });
   const [adminData, setAdminData] = useState<AdminDashboardData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isSyncingMembers, setIsSyncingMembers] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedTab, setSelectedTab] = useState<'kpis' | 'logs'>('kpis');
+  const [rankingSearch, setRankingSearch] = useState('');
+  const [funcSearch, setFuncSearch] = useState('');
+  const [selectedTab, setSelectedTab] = useState<AdminTab>('kpis');
+  const [rankingPeriod, setRankingPeriod] = useState<RankingPeriod>('geral');
+  const [hoveredPoint, setHoveredPoint] = useState<{ x: number; y: number; hour: string; count: number } | null>(null);
 
   const fetchAdminData = useCallback(async (secret: string) => {
     setIsLoading(true);
@@ -95,143 +142,242 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ isOpen, onClose 
       }
 
       if (!res.ok) {
-        throw new Error('Falha na resposta do servidor.');
+        throw new Error('Falha ao carregar dados do servidor');
       }
 
       const data: AdminDashboardData = await res.json();
       setAdminData(data);
       setIsAuthenticated(true);
-      setAdminSecret(secret);
       sessionStorage.setItem(AUTH_STORAGE_KEY, 'true');
       sessionStorage.setItem(SECRET_STORAGE_KEY, secret);
     } catch (err: any) {
-      toast.error('Erro ao carregar telemetria da VPS: ' + (err.message || ''));
+      toast.error('Erro de conexão com o microsserviço de telemetria.');
     } finally {
       setIsLoading(false);
     }
   }, []);
 
+  const handleManualSyncMembers = useCallback(async () => {
+    if (!adminSecret) return;
+    setIsSyncingMembers(true);
+    try {
+      const res = await fetch('/api/telemetry/admin/sync-funcionarios', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ secret: adminSecret }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success(`Quadro sincronizado com sucesso!`, {
+          description: `${data.total} funcionários atualizados da API Netlify.`,
+        });
+        fetchAdminData(adminSecret);
+      } else {
+        toast.error('Falha ao sincronizar com a API Netlify.');
+      }
+    } catch (_) {
+      toast.error('Erro ao conectar com servidor de sincronização.');
+    } finally {
+      setIsSyncingMembers(false);
+    }
+  }, [adminSecret, fetchAdminData]);
+
   useEffect(() => {
-    if (isOpen && isAuthenticated && adminSecret) {
+    if (isOpen && adminSecret) {
       fetchAdminData(adminSecret);
     }
-  }, [isOpen, isAuthenticated, adminSecret, fetchAdminData]);
+  }, [isOpen, adminSecret, fetchAdminData]);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!password.trim()) {
-      toast.warning('Digite a senha mestra.');
-      return;
-    }
+    if (!password.trim()) return;
+    setAdminSecret(password.trim());
     fetchAdminData(password.trim());
   };
 
   const handleLogout = () => {
-    setIsAuthenticated(false);
     sessionStorage.removeItem(AUTH_STORAGE_KEY);
     sessionStorage.removeItem(SECRET_STORAGE_KEY);
+    setIsAuthenticated(false);
     setAdminSecret('');
-    setPassword('');
     setAdminData(null);
+    setPassword('');
     toast.info('Sessão administrativa encerrada.');
   };
 
+  // Filtragem dos Logs
+  const filteredLogs = useMemo(() => {
+    if (!adminData?.recentLogs) return [];
+    if (!searchTerm.trim()) return adminData.recentLogs;
+
+    const term = searchTerm.toLowerCase();
+    return adminData.recentLogs.filter(
+      (log) =>
+        log.placa.toLowerCase().includes(term) ||
+        log.modelo.toLowerCase().includes(term) ||
+        log.servico.toLowerCase().includes(term) ||
+        log.model.toLowerCase().includes(term) ||
+        (log.mechanicName && log.mechanicName.toLowerCase().includes(term))
+    );
+  }, [adminData?.recentLogs, searchTerm]);
+
+  // Filtragem e Ordenação do Ranking de Mecânicos
+  const filteredRanking = useMemo(() => {
+    if (!adminData?.ranking) return [];
+    let list = [...adminData.ranking];
+
+    if (rankingPeriod === 'hoje') {
+      list.sort((a, b) => b.hojeFichas - a.hojeFichas);
+    } else if (rankingPeriod === 'semana') {
+      list.sort((a, b) => b.semanaFichas - a.semanaFichas);
+    } else {
+      list.sort((a, b) => b.totalFichas - a.totalFichas);
+    }
+
+    if (rankingSearch.trim()) {
+      const term = rankingSearch.toLowerCase();
+      list = list.filter(
+        (m) =>
+          m.nome.toLowerCase().includes(term) ||
+          m.steamHex.toLowerCase().includes(term)
+      );
+    }
+
+    return list;
+  }, [adminData?.ranking, rankingPeriod, rankingSearch]);
+
+  // Filtragem do Quadro de Funcionários
+  const filteredFuncionarios = useMemo(() => {
+    if (!adminData?.funcionarios) return [];
+    if (!funcSearch.trim()) return adminData.funcionarios;
+
+    const term = funcSearch.toLowerCase();
+    return adminData.funcionarios.filter(
+      (f) =>
+        f.nome.toLowerCase().includes(term) ||
+        f.steamHex.toLowerCase().includes(term)
+    );
+  }, [adminData?.funcionarios, funcSearch]);
+
+  // Total geral de fichas para cálculo de participação %
+  const totalFichasGeral = useMemo(() => {
+    if (!adminData?.ranking) return 0;
+    return adminData.ranking.reduce((acc, m) => acc + m.totalFichas, 0);
+  }, [adminData?.ranking]);
+
+  // Cálculo da Curva Bézier 24 Horas
+  const { chartPoints, linePath, areaPath, maxHourlyCount, peakPoint } = useMemo(() => {
+    const hourly = adminData?.hourly || [];
+    const maxVal = Math.max(...hourly.map((h) => h.count), 1);
+
+    const svgWidth = 800;
+    const svgHeight = 160;
+    const paddingX = 35;
+    const paddingTop = 25;
+    const paddingBottom = 25;
+    const usableWidth = svgWidth - paddingX * 2;
+    const usableHeight = svgHeight - paddingTop - paddingBottom;
+
+    const points = hourly.map((h, i) => {
+      const x = paddingX + (i / Math.max(hourly.length - 1, 1)) * usableWidth;
+      const y = svgHeight - paddingBottom - (h.count / maxVal) * usableHeight;
+      return { x, y, count: h.count, hour: h.hour };
+    });
+
+    let peak = points[0] || { x: 0, y: 0, count: 0, hour: '00:00' };
+    points.forEach((pt) => {
+      if (pt.count > peak.count) peak = pt;
+    });
+
+    if (points.length === 0) {
+      return { chartPoints: [], linePath: '', areaPath: '', maxHourlyCount: 0, peakPoint: peak };
+    }
+
+    let d = `M ${points[0].x},${points[0].y}`;
+    for (let i = 0; i < points.length - 1; i++) {
+      const p0 = points[i === 0 ? 0 : i - 1];
+      const p1 = points[i];
+      const p2 = points[i + 1];
+      const p3 = points[i + 2 < points.length ? i + 2 : i + 1];
+
+      const cp1x = p1.x + (p2.x - p0.x) / 6;
+      const cp1y = p1.y + (p2.y - p0.y) / 6;
+      const cp2x = p2.x - (p3.x - p1.x) / 6;
+      const cp2y = p2.y - (p3.y - p1.y) / 6;
+
+      d += ` C ${cp1x.toFixed(2)},${cp1y.toFixed(2)} ${cp2x.toFixed(2)},${cp2y.toFixed(2)} ${p2.x.toFixed(2)},${p2.y.toFixed(2)}`;
+    }
+
+    const baselineY = svgHeight - paddingBottom;
+    const area = `${d} L ${points[points.length - 1].x},${baselineY} L ${points[0].x},${baselineY} Z`;
+
+    return { chartPoints: points, linePath: d, areaPath: area, maxHourlyCount: maxVal, peakPoint: peak };
+  }, [adminData?.hourly]);
+
   const handleExportCSV = () => {
-    if (!adminData || !adminData.recentLogs.length) {
-      toast.info('Sem dados para exportar.');
+    if (!adminData?.recentLogs || adminData.recentLogs.length === 0) {
+      toast.error('Nenhum dado disponível para exportação.');
       return;
     }
 
-    const headers = ['ID', 'Data/Hora', 'Placa', 'Modelo', 'Servico', 'Modo', 'IA Provedor', 'Duracao (s)', 'Status'];
-    const rows = adminData.recentLogs.map((log) => [
-      log.id,
-      `"${log.dateTimeStr}"`,
-      `"${log.placa}"`,
-      `"${log.modelo}"`,
-      `"${log.servico}"`,
-      `"${log.serviceMode}"`,
-      `"${log.model}"`,
-      log.durationSec,
-      log.success ? 'Sucesso' : 'Falha',
+    const headers = ['ID', 'Data/Hora', 'Mecânico', 'SteamHex', 'Sucesso', 'Duracao_ms', 'Duracao_s', 'IA_Model', 'Placa', 'Modelo_Carro', 'Servico', 'Modo_Servico'];
+    const rows = adminData.recentLogs.map((l) => [
+      l.id,
+      `"${l.dateTimeStr}"`,
+      `"${l.mechanicName || 'Anônimo'}"`,
+      `"${l.mechanicSteamHex || ''}"`,
+      l.success ? 'SIM' : 'NAO',
+      l.durationMs,
+      l.durationSec,
+      `"${l.model}"`,
+      `"${l.placa}"`,
+      `"${l.modelo}"`,
+      `"${l.servico}"`,
+      `"${l.serviceMode}"`,
     ]);
 
-    const csvContent = [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
+    const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `telemetria_mecanica_${Date.now()}.csv`);
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `telemetria_mecanica_brp_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    toast.success('Relatório CSV baixado com sucesso!');
+    toast.success('Arquivo CSV baixado com sucesso!');
   };
 
   if (!isOpen) return null;
 
-  const filteredLogs = (adminData?.recentLogs || []).filter((log) => {
-    const q = searchTerm.toLowerCase();
-    return (
-      log.placa.toLowerCase().includes(q) ||
-      log.modelo.toLowerCase().includes(q) ||
-      log.servico.toLowerCase().includes(q) ||
-      log.model.toLowerCase().includes(q)
-    );
-  });
-
-  const totalServicesCount =
-    (adminData?.serviceBreakdown.oleo || 0) +
-    (adminData?.serviceBreakdown.tuning || 0) +
-    (adminData?.serviceBreakdown.retifica || 0) +
-    (adminData?.serviceBreakdown.extra || 0);
-
-  const getPercent = (count: number) => {
-    if (totalServicesCount === 0) return 0;
-    return Math.round((count / totalServicesCount) * 100);
-  };
-
-  // Encontra o pico de atendimentos para dimensionar o gráfico
-  const maxHourlyCount = Math.max(...(adminData?.hourly.map((h) => h.count) || [1]), 1);
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
-      {/* Backdrop Escuro com Blur */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        className="fixed inset-0 bg-black/85 backdrop-blur-md"
-        onClick={onClose}
-      />
-
-      {/* Janela do Painel */}
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-xl overflow-y-auto">
       <motion.div
         initial={{ opacity: 0, scale: 0.95, y: 15 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 15 }}
-        transition={{ type: 'spring', duration: 0.35, bounce: 0.1 }}
-        className="relative bg-[#090d16] border border-[#1e293b] w-full max-w-5xl rounded-2xl overflow-hidden shadow-2xl z-10 max-h-[92vh] flex flex-col my-auto"
+        transition={{ duration: 0.25, ease: 'easeOut' }}
+        className="relative w-full max-w-6xl bg-[#090d16] border border-slate-800/90 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]"
       >
         {/* Glow Superior */}
-        <div className="absolute top-0 right-1/4 w-96 h-32 bg-rose-600/10 rounded-full blur-3xl pointer-events-none -z-10" />
+        <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-96 h-48 bg-blue-600/10 rounded-full blur-3xl pointer-events-none -z-10" />
 
-        {/* Top Header */}
-        <div className="bg-[#060911] border-b border-[#1e293b] px-6 py-4 flex items-center justify-between flex-wrap gap-3">
+        {/* Header Principal do Modal */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800/80 bg-slate-900/60 shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-rose-950/80 border border-rose-800/60 flex items-center justify-center">
-              <ShieldAlert className="w-5 h-5 text-rose-400" />
+            <div className="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center shadow-[0_0_15px_rgba(37,99,235,0.2)]">
+              <ShieldAlert className="w-5 h-5 text-blue-400" />
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-bold text-white uppercase tracking-wider">
-                  Painel Administrativo & Telemetria
+                  Painel de Controle & Telemetria
                 </h2>
-                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 uppercase tracking-widest font-mono">
-                  Master
+                <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-blue-500/20 text-blue-300 border border-blue-400/30">
+                  MECÂNICA BRP
                 </span>
               </div>
-              <p className="text-xs text-slate-400 font-mono">
-                Auditoria de performance e estatísticas em tempo real (SQLite VPS)
+              <p className="text-xs text-slate-400">
+                Auditoria de OCR, Ranking de Produtividade e Quadro de Funcionários
               </p>
             </div>
           </div>
@@ -241,32 +387,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ isOpen, onClose 
               <>
                 <button
                   type="button"
-                  onClick={() => fetchAdminData('neco2026')}
+                  onClick={() => fetchAdminData(adminSecret)}
                   disabled={isLoading}
-                  className="p-2 text-slate-400 hover:text-white rounded-lg bg-[#111827] border border-[#1e293b] hover:bg-slate-800 transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
-                  title="Atualizar Dados"
+                  className="p-2 rounded-lg bg-slate-800/70 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 transition-colors"
+                  title="Atualizar dados"
                 >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-blue-400' : ''}`} />
-                  <span className="hidden sm:inline">Atualizar</span>
+                  <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-blue-400' : ''}`} />
                 </button>
-
                 <button
                   type="button"
                   onClick={handleExportCSV}
-                  className="p-2 text-slate-400 hover:text-white rounded-lg bg-[#111827] border border-[#1e293b] hover:bg-slate-800 transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
-                  title="Exportar CSV"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/70 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 text-xs font-semibold transition-colors"
+                  title="Exportar dados para planilha CSV"
                 >
-                  <Download className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="hidden sm:inline">Exportar CSV</span>
+                  <Download className="w-3.5 h-3.5 text-blue-400" />
+                  <span className="hidden sm:inline">CSV</span>
                 </button>
-
                 <button
                   type="button"
                   onClick={handleLogout}
-                  className="p-2 text-slate-400 hover:text-rose-300 rounded-lg bg-[#111827] border border-[#1e293b] hover:bg-rose-950/40 transition-colors cursor-pointer text-xs font-semibold"
-                  title="Sair"
+                  className="p-2 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/40 transition-colors"
+                  title="Encerrar sessão de admin"
                 >
-                  <Lock className="w-3.5 h-3.5" />
+                  <Unlock className="w-4 h-4" />
                 </button>
               </>
             )}
@@ -274,330 +417,680 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ isOpen, onClose 
             <button
               type="button"
               onClick={onClose}
-              className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
-              title="Fechar"
+              className="p-2 rounded-lg bg-slate-800/40 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800 transition-colors"
+              title="Fechar painel"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
         </div>
 
-        {/* Corpo do Painel */}
-        <div className="p-6 overflow-y-auto flex-1 space-y-6">
-          {!isAuthenticated ? (
-            /* Tela de Login com Senha Master */
-            <div className="max-w-md mx-auto py-12 text-center space-y-5">
-              <div className="w-16 h-16 rounded-2xl bg-rose-950/60 border border-rose-800/50 flex items-center justify-center mx-auto shadow-lg shadow-rose-950/50">
-                <Lock className="w-8 h-8 text-rose-400" />
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-white">Área Restrita</h3>
-                <p className="text-xs text-slate-400 mt-1">
-                  Insira a senha mestra para visualizar as métricas globais e histórico da oficina.
-                </p>
-              </div>
-
-              <form onSubmit={handleLogin} className="space-y-3">
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Senha mestra de acesso..."
-                  autoFocus
-                  className="w-full bg-[#0d1424] border border-[#1e293b] focus:border-rose-500 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none transition-colors text-center font-mono"
-                />
-                <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="w-full bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 text-white font-bold py-3 px-4 rounded-xl text-sm transition-all shadow-md shadow-rose-900/30 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                >
-                  <Unlock className="w-4 h-4" />
-                  {isLoading ? 'Verificando...' : 'Desbloquear Painel'}
-                </button>
-              </form>
+        {/* Conteúdo do Modal */}
+        {!isAuthenticated ? (
+          /* TELA DE AUTENTICAÇÃO COM SENHA MASTER */
+          <div className="flex-1 flex flex-col items-center justify-center p-8 sm:p-12 text-center">
+            <div className="w-16 h-16 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center mb-4 shadow-xl">
+              <Lock className="w-8 h-8 text-blue-400" />
             </div>
-          ) : adminData ? (
-            /* Dashboard Completo */
-            <div className="space-y-6">
-              {/* 1. Cards de KPI Principais */}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* Card 1: Total Hoje */}
-                <div className="bg-[#0e1424] border border-[#1e293b] rounded-xl p-4 space-y-1">
-                  <div className="flex items-center justify-between text-xs text-slate-400 font-mono">
-                    <span>ATENDIMENTOS HOJE</span>
-                    <Clock className="w-3.5 h-3.5 text-blue-400" />
-                  </div>
-                  <div className="text-2xl font-black text-white font-mono">
-                    {adminData.summary.totalToday}
-                  </div>
-                  <p className="text-[11px] text-slate-500">Reinicia diariamente às 03:00</p>
-                </div>
+            <h3 className="text-lg font-bold text-white mb-1">Acesso Administrativo</h3>
+            <p className="text-xs text-slate-400 max-w-sm mb-6">
+              Insira a senha mestra para visualizar KPIs de atendimento, ranking dos mecânicos e quadro de funcionários.
+            </p>
 
-                {/* Card 2: Total 7 Dias */}
-                <div className="bg-[#0e1424] border border-[#1e293b] rounded-xl p-4 space-y-1">
-                  <div className="flex items-center justify-between text-xs text-slate-400 font-mono">
-                    <span>ÚLTIMOS 7 DIAS</span>
-                    <TrendingUp className="w-3.5 h-3.5 text-purple-400" />
-                  </div>
-                  <div className="text-2xl font-black text-purple-300 font-mono">
-                    {adminData.summary.totalWeek}
-                  </div>
-                  <p className="text-[11px] text-slate-500">Volume semanal acumulado</p>
-                </div>
+            <form onSubmit={handleLogin} className="w-full max-w-xs space-y-3">
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Senha Master"
+                autoFocus
+                className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700/80 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-blue-500 transition-colors text-center tracking-widest font-mono"
+              />
+              <button
+                type="submit"
+                disabled={isLoading || !password.trim()}
+                className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold text-sm shadow-lg shadow-blue-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                {isLoading ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Verificando...</span>
+                  </>
+                ) : (
+                  <>
+                    <Unlock className="w-4 h-4" />
+                    <span>Desbloquear Painel</span>
+                  </>
+                )}
+              </button>
+            </form>
+          </div>
+        ) : (
+          /* PAINEL ADMINISTRATIVO MODULAR COM 4 ABAS */
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Barra de Navegação por Abas (Alta Densidade) */}
+            <div className="px-6 pt-3 pb-0 border-b border-slate-800/80 bg-slate-900/40 flex items-center gap-2 overflow-x-auto shrink-0 no-scrollbar">
+              <button
+                type="button"
+                onClick={() => {
+                  playChipSelectSound();
+                  setSelectedTab('kpis');
+                }}
+                className={`flex items-center gap-2 px-4 py-2.5 border-b-2 font-bold text-xs tracking-wider transition-all whitespace-nowrap cursor-pointer ${
+                  selectedTab === 'kpis'
+                    ? 'border-blue-500 text-blue-400 bg-blue-500/10 rounded-t-lg'
+                    : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 rounded-t-lg'
+                }`}
+              >
+                <BarChart3 className="w-4 h-4" />
+                <span>1. VISÃO GERAL</span>
+              </button>
 
-                {/* Card 3: Taxa de Sucesso */}
-                <div className="bg-[#0e1424] border border-[#1e293b] rounded-xl p-4 space-y-1">
-                  <div className="flex items-center justify-between text-xs text-slate-400 font-mono">
-                    <span>TAXA DE SUCESSO</span>
-                    <Activity className="w-3.5 h-3.5 text-emerald-400" />
-                  </div>
-                  <div className="text-2xl font-black text-emerald-400 font-mono">
-                    {adminData.summary.successRate}%
-                  </div>
-                  <p className="text-[11px] text-slate-500">Precisão da extração de dados</p>
-                </div>
+              <button
+                type="button"
+                onClick={() => {
+                  playChipSelectSound();
+                  setSelectedTab('ranking');
+                }}
+                className={`flex items-center gap-2 px-4 py-2.5 border-b-2 font-bold text-xs tracking-wider transition-all whitespace-nowrap cursor-pointer ${
+                  selectedTab === 'ranking'
+                    ? 'border-blue-500 text-blue-400 bg-blue-500/10 rounded-t-lg'
+                    : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 rounded-t-lg'
+                }`}
+              >
+                <Award className="w-4 h-4 text-amber-400" />
+                <span>2. RANKING DE MECÂNICOS</span>
+                {adminData?.ranking && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-500/20 text-amber-300 font-mono">
+                    {adminData.ranking.length}
+                  </span>
+                )}
+              </button>
 
-                {/* Card 4: Latência Média */}
-                <div className="bg-[#0e1424] border border-[#1e293b] rounded-xl p-4 space-y-1">
-                  <div className="flex items-center justify-between text-xs text-slate-400 font-mono">
-                    <span>TEMPO MÉDIO DE IA</span>
-                    <Zap className="w-3.5 h-3.5 text-amber-400" />
+              <button
+                type="button"
+                onClick={() => {
+                  playChipSelectSound();
+                  setSelectedTab('logs');
+                }}
+                className={`flex items-center gap-2 px-4 py-2.5 border-b-2 font-bold text-xs tracking-wider transition-all whitespace-nowrap cursor-pointer ${
+                  selectedTab === 'logs'
+                    ? 'border-blue-500 text-blue-400 bg-blue-500/10 rounded-t-lg'
+                    : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 rounded-t-lg'
+                }`}
+              >
+                <FileText className="w-4 h-4" />
+                <span>3. FICHAS & LOGS</span>
+                {adminData?.recentLogs && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-blue-500/20 text-blue-300 font-mono">
+                    {adminData.recentLogs.length}
+                  </span>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  playChipSelectSound();
+                  setSelectedTab('funcionarios');
+                }}
+                className={`flex items-center gap-2 px-4 py-2.5 border-b-2 font-bold text-xs tracking-wider transition-all whitespace-nowrap cursor-pointer ${
+                  selectedTab === 'funcionarios'
+                    ? 'border-blue-500 text-blue-400 bg-blue-500/10 rounded-t-lg'
+                    : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 rounded-t-lg'
+                }`}
+              >
+                <Users className="w-4 h-4 text-emerald-400" />
+                <span>4. QUADRO DA MECÂNICA</span>
+                {adminData?.funcionarios && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-500/20 text-emerald-300 font-mono">
+                    {adminData.funcionarios.length}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {/* Conteúdo Rolável da Aba Ativa */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              {/* ========================================================================= */}
+              {/* ABA 1: VISÃO GERAL & KPIS */}
+              {/* ========================================================================= */}
+              {selectedTab === 'kpis' && (
+                <div className="space-y-6">
+                  {/* Grid de 4 Cards Principais */}
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs text-slate-400 font-medium">Atendimentos Hoje</span>
+                        <Activity className="w-4 h-4 text-blue-400" />
+                      </div>
+                      <div className="text-2xl font-black text-white font-mono">
+                        {adminData?.summary.totalToday ?? 0}
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-1">
+                        Esta semana: <span className="font-bold text-slate-300 font-mono">{adminData?.summary.totalWeek ?? 0}</span>
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs text-slate-400 font-medium">Taxa de Sucesso</span>
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      </div>
+                      <div className="text-2xl font-black text-emerald-400 font-mono">
+                        {adminData?.summary.successRate ?? 100}%
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-1">
+                        100% de leitura válida
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs text-slate-400 font-medium">Tempo Médio OCR</span>
+                        <Clock className="w-4 h-4 text-amber-400" />
+                      </div>
+                      <div className="text-2xl font-black text-amber-400 font-mono">
+                        {adminData?.summary.avgDurationSec ?? 1.4}s
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-1">
+                        Mais rápido: <span className="font-bold text-emerald-400 font-mono">{adminData?.summary.fastestDurationSec ?? 1.1}s</span>
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs text-slate-400 font-medium">Horário de Pico</span>
+                        <TrendingUp className="w-4 h-4 text-indigo-400" />
+                      </div>
+                      <div className="text-2xl font-black text-indigo-300 font-mono">
+                        {peakPoint.count > 0 ? peakPoint.hour : '--:--'}
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-1">
+                        Volume máx: <span className="font-bold text-slate-300 font-mono">{peakPoint.count} fichas</span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-2xl font-black text-amber-300 font-mono">
-                    {adminData.summary.avgDurationSec}s
-                  </div>
-                  <p className="text-[11px] text-slate-500">
-                    Mais rápido: {adminData.summary.fastestDurationSec}s
-                  </p>
-                </div>
-              </div>
 
-              {/* 2. Seção de Gráficos e Distribuições */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                {/* Gráfico de Horários de Pico (7 Colunas) */}
-                <div className="lg:col-span-7 bg-[#0e1424] border border-[#1e293b] rounded-xl p-5 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
-                      <Clock className="w-4 h-4 text-blue-400" />
-                      Horários de Pico (Turno 24h)
-                    </h3>
-                    <span className="text-xs text-slate-400 font-mono">Serviços / Hora</span>
-                  </div>
+                  {/* Gráfico Curva Neon de Horários de Pico (24h) */}
+                  <div className="p-5 rounded-xl bg-slate-900/60 border border-slate-800/80">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <TrendingUp className="w-4 h-4 text-blue-400" />
+                        <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                          Curva de Atendimentos nas Últimas 24 Horas
+                        </h4>
+                      </div>
+                      <span className="text-[11px] font-mono text-slate-400">00:00 às 23:00 (BRT)</span>
+                    </div>
 
-                  {/* Barras de 00h a 23h */}
-                  <div className="h-36 flex items-end gap-1 sm:gap-1.5 pt-4">
-                    {adminData.hourly.map((h, i) => {
-                      const heightPercent = maxHourlyCount > 0 ? (h.count / maxHourlyCount) * 100 : 0;
-                      const isPeak = h.count === maxHourlyCount && h.count > 0;
-                      return (
-                        <div key={i} className="flex-1 flex flex-col items-center gap-1 group relative">
-                          {/* Tooltip Hover */}
-                          <div className="absolute -top-7 bg-slate-900 border border-slate-700 text-white text-[10px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20 whitespace-nowrap font-mono">
-                            {h.hour}: {h.count} fichas
-                          </div>
+                    <div className="relative w-full h-44 bg-slate-950/70 border border-slate-800/70 rounded-xl p-2 overflow-hidden select-none">
+                      <svg viewBox="0 0 800 160" preserveAspectRatio="none" className="w-full h-full">
+                        <defs>
+                          <linearGradient id="adminPeakLine" x1="0" y1="0" x2="1" y2="0">
+                            <stop offset="0%" stopColor="#3b82f6" />
+                            <stop offset="50%" stopColor="#06b6d4" />
+                            <stop offset="100%" stopColor="#6366f1" />
+                          </linearGradient>
+                          <linearGradient id="adminPeakArea" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.35" />
+                            <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0" />
+                          </linearGradient>
+                          <filter id="adminGlow" x="-20%" y="-20%" width="140%" height="140%">
+                            <feDropShadow dx="0" dy="0" stdDeviation="3" floodColor="#38bdf8" floodOpacity="0.6" />
+                          </filter>
+                        </defs>
 
-                          <div className="w-full bg-[#1e293b] rounded-t-sm h-full flex items-end overflow-hidden">
-                            <motion.div
-                              initial={{ height: 0 }}
-                              animate={{ height: `${Math.max(heightPercent, 4)}%` }}
-                              transition={{ duration: 0.5, delay: i * 0.015 }}
-                              className={`w-full rounded-t-sm transition-colors ${
-                                isPeak
-                                  ? 'bg-rose-500 group-hover:bg-rose-400'
-                                  : h.count > 0
-                                  ? 'bg-blue-500 group-hover:bg-blue-400'
-                                  : 'bg-slate-800'
-                              }`}
-                            />
-                          </div>
+                        {/* Grid Horizontal */}
+                        <line x1="35" y1="30" x2="765" y2="30" stroke="#334155" strokeDasharray="3 3" strokeOpacity="0.35" />
+                        <line x1="35" y1="80" x2="765" y2="80" stroke="#334155" strokeDasharray="3 3" strokeOpacity="0.35" />
+                        <line x1="35" y1="135" x2="765" y2="135" stroke="#334155" strokeOpacity="0.6" />
 
-                          {/* Label da hora a cada 3h ou em telas maiores */}
-                          <span className="text-[9px] text-slate-500 font-mono">
-                            {i % 4 === 0 ? h.hour.split(':')[0] + 'h' : ''}
-                          </span>
+                        {/* Área Sombreada */}
+                        {areaPath && <path d={areaPath} fill="url(#adminPeakArea)" />}
+
+                        {/* Linha Contínua */}
+                        {linePath && (
+                          <path
+                            d={linePath}
+                            fill="none"
+                            stroke="url(#adminPeakLine)"
+                            strokeWidth="3"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            filter="url(#adminGlow)"
+                          />
+                        )}
+
+                        {/* Ponto Pulsante de Pico */}
+                        {peakPoint.count > 0 && (
+                          <g>
+                            <circle cx={peakPoint.x} cy={peakPoint.y} r="8" fill="#38bdf8" opacity="0.3" className="animate-ping" />
+                            <circle cx={peakPoint.x} cy={peakPoint.y} r="4.5" fill="#ffffff" stroke="#0284c7" strokeWidth="2" />
+                          </g>
+                        )}
+
+                        {/* Pontos Interativos */}
+                        {chartPoints.map((pt, i) => (
+                          <circle
+                            key={i}
+                            cx={pt.x}
+                            cy={pt.y}
+                            r={hoveredPoint?.hour === pt.hour ? 5.5 : 2.5}
+                            fill={hoveredPoint?.hour === pt.hour ? '#ffffff' : '#38bdf8'}
+                            stroke="#0f172a"
+                            strokeWidth="1.5"
+                            className="cursor-pointer transition-all"
+                            onMouseEnter={() => setHoveredPoint(pt)}
+                            onMouseLeave={() => setHoveredPoint(null)}
+                          />
+                        ))}
+                      </svg>
+
+                      {/* Tooltip Dinâmico */}
+                      {hoveredPoint && (
+                        <div
+                          className="absolute pointer-events-none z-20 px-2.5 py-1 rounded bg-slate-900/95 border border-cyan-500/50 shadow-xl text-center backdrop-blur-md"
+                          style={{
+                            left: `${(hoveredPoint.x / 800) * 100}%`,
+                            top: `${Math.max(10, (hoveredPoint.y / 160) * 100 - 30)}%`,
+                            transform: 'translate(-50%, -100%)',
+                          }}
+                        >
+                          <div className="text-[10px] font-mono text-cyan-300 font-bold">{hoveredPoint.hour}</div>
+                          <div className="text-xs font-black text-white">{hoveredPoint.count} fichas</div>
                         </div>
-                      );
-                    })}
+                      )}
+                    </div>
                   </div>
-                </div>
 
-                {/* Divisão dos Tipos de Serviço & IAs (5 Colunas) */}
-                <div className="lg:col-span-5 bg-[#0e1424] border border-[#1e293b] rounded-xl p-5 space-y-4">
-                  <h3 className="text-sm font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
-                    <Wrench className="w-4 h-4 text-emerald-400" />
-                    Divisão de Serviços
-                  </h3>
-
-                  <div className="space-y-3">
-                    {/* Troca de Óleo */}
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="flex items-center gap-1.5 text-amber-300 font-medium">
-                          <Droplets className="w-3.5 h-3.5" /> Troca de Óleo
-                        </span>
-                        <span className="text-slate-300 font-mono">
-                          {adminData.serviceBreakdown.oleo} ({getPercent(adminData.serviceBreakdown.oleo)}%)
-                        </span>
+                  {/* Divisão por Categoria de Serviço */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="p-3.5 rounded-xl bg-slate-900/40 border border-slate-800/80 flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                        <Droplets className="w-4 h-4" />
                       </div>
-                      <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-amber-500 rounded-full transition-all duration-500"
-                          style={{ width: `${getPercent(adminData.serviceBreakdown.oleo)}%` }}
-                        />
+                      <div>
+                        <span className="text-[11px] text-slate-400 block">Troca de Óleo</span>
+                        <span className="text-base font-bold text-white font-mono">{adminData?.serviceBreakdown.oleo ?? 0}</span>
                       </div>
                     </div>
 
-                    {/* Performance & Peças */}
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="flex items-center gap-1.5 text-blue-300 font-medium">
-                          <Zap className="w-3.5 h-3.5" /> Performance & Peças
-                        </span>
-                        <span className="text-slate-300 font-mono">
-                          {adminData.serviceBreakdown.tuning} ({getPercent(adminData.serviceBreakdown.tuning)}%)
-                        </span>
+                    <div className="p-3.5 rounded-xl bg-slate-900/40 border border-slate-800/80 flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center">
+                        <Zap className="w-4 h-4" />
                       </div>
-                      <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-blue-500 rounded-full transition-all duration-500"
-                          style={{ width: `${getPercent(adminData.serviceBreakdown.tuning)}%` }}
-                        />
+                      <div>
+                        <span className="text-[11px] text-slate-400 block">Tuning / Peças</span>
+                        <span className="text-base font-bold text-white font-mono">{adminData?.serviceBreakdown.tuning ?? 0}</span>
                       </div>
                     </div>
 
-                    {/* Retífica de Motor */}
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="flex items-center gap-1.5 text-rose-300 font-medium">
-                          <Wrench className="w-3.5 h-3.5" /> Retífica de Motor
-                        </span>
-                        <span className="text-slate-300 font-mono">
-                          {adminData.serviceBreakdown.retifica} ({getPercent(adminData.serviceBreakdown.retifica)}%)
-                        </span>
+                    <div className="p-3.5 rounded-xl bg-slate-900/40 border border-slate-800/80 flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center">
+                        <Wrench className="w-4 h-4" />
                       </div>
-                      <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-rose-500 rounded-full transition-all duration-500"
-                          style={{ width: `${getPercent(adminData.serviceBreakdown.retifica)}%` }}
-                        />
+                      <div>
+                        <span className="text-[11px] text-slate-400 block">Retífica de Motor</span>
+                        <span className="text-base font-bold text-white font-mono">{adminData?.serviceBreakdown.retifica ?? 0}</span>
                       </div>
                     </div>
 
-                    {/* Remoção de Peça (Extra) */}
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="flex items-center gap-1.5 text-purple-300 font-medium">
-                          <PackageMinus className="w-3.5 h-3.5" /> Remoção de Peça
-                        </span>
-                        <span className="text-slate-300 font-mono">
-                          {adminData.serviceBreakdown.extra} ({getPercent(adminData.serviceBreakdown.extra)}%)
-                        </span>
+                    <div className="p-3.5 rounded-xl bg-slate-900/40 border border-slate-800/80 flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-cyan-500/20 text-cyan-400 flex items-center justify-center">
+                        <PackageMinus className="w-4 h-4" />
                       </div>
-                      <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-purple-500 rounded-full transition-all duration-500"
-                          style={{ width: `${getPercent(adminData.serviceBreakdown.extra)}%` }}
-                        />
+                      <div>
+                        <span className="text-[11px] text-slate-400 block">Remoção de Peça</span>
+                        <span className="text-base font-bold text-white font-mono">{adminData?.serviceBreakdown.extra ?? 0}</span>
                       </div>
                     </div>
                   </div>
                 </div>
-              </div>
+              )}
 
-              {/* 3. Tabela de Auditoria em Tempo Real (Últimos 50 Atendimentos) */}
-              <div className="bg-[#0e1424] border border-[#1e293b] rounded-xl p-5 space-y-4">
-                <div className="flex items-center justify-between flex-wrap gap-3">
-                  <div>
-                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                      Auditoria de Atendimentos em Tempo Real
-                    </h3>
-                    <p className="text-xs text-slate-400">
-                      Últimos 50 registros sincronizados com a VPS
-                    </p>
+              {/* ========================================================================= */}
+              {/* ABA 2: RANKING DE MECÂNICOS & PRODUTIVIDADE */}
+              {/* ========================================================================= */}
+              {selectedTab === 'ranking' && (
+                <div className="space-y-4">
+                  {/* Barra de Filtro de Período & Busca */}
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-900/60 p-3 rounded-xl border border-slate-800/80">
+                    <div className="flex items-center gap-1.5 w-full sm:w-auto">
+                      <button
+                        type="button"
+                        onClick={() => setRankingPeriod('hoje')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                          rankingPeriod === 'hoje'
+                            ? 'bg-blue-600 text-white shadow-md'
+                            : 'bg-slate-800/60 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Hoje (Turno)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRankingPeriod('semana')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                          rankingPeriod === 'semana'
+                            ? 'bg-blue-600 text-white shadow-md'
+                            : 'bg-slate-800/60 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Últimos 7 Dias
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRankingPeriod('geral')}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                          rankingPeriod === 'geral'
+                            ? 'bg-blue-600 text-white shadow-md'
+                            : 'bg-slate-800/60 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Geral (Total)
+                      </button>
+                    </div>
+
+                    <div className="relative w-full sm:w-64">
+                      <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={rankingSearch}
+                        onChange={(e) => setRankingSearch(e.target.value)}
+                        placeholder="Buscar mecânico..."
+                        className="w-full pl-9 pr-3 py-1.5 bg-slate-950/80 border border-slate-700/80 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
                   </div>
 
-                  {/* Barra de Busca */}
-                  <div className="relative w-full sm:w-64">
-                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  {/* Tabela de Produtividade dos Mecânicos */}
+                  <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950/60">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-900/90 text-slate-400 uppercase tracking-wider font-mono text-[11px] border-b border-slate-800">
+                          <tr>
+                            <th className="py-3 px-3 w-12 text-center">#</th>
+                            <th className="py-3 px-4">Mecânico</th>
+                            <th className="py-3 px-3 text-center">Total Fichas</th>
+                            <th className="py-3 px-3 text-center text-amber-400">🛢️ Óleo</th>
+                            <th className="py-3 px-3 text-center text-blue-400">⚡ Tuning</th>
+                            <th className="py-3 px-3 text-center text-purple-400">🔧 Retífica</th>
+                            <th className="py-3 px-3 text-center text-cyan-400">📦 Remoção</th>
+                            <th className="py-3 px-4 text-right">Participação</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                          {filteredRanking.length === 0 ? (
+                            <tr>
+                              <td colSpan={8} className="py-8 text-center text-slate-500">
+                                Nenhum atendimento computado para mecânicos no período selecionado.
+                              </td>
+                            </tr>
+                          ) : (
+                            filteredRanking.map((m, idx) => {
+                              const totalPeriod =
+                                rankingPeriod === 'hoje'
+                                  ? m.hojeFichas
+                                  : rankingPeriod === 'semana'
+                                  ? m.semanaFichas
+                                  : m.totalFichas;
+                              const sharePct =
+                                totalFichasGeral > 0
+                                  ? Math.round((m.totalFichas / totalFichasGeral) * 100)
+                                  : 0;
+
+                              return (
+                                <tr key={m.steamHex} className="hover:bg-slate-900/40 transition-colors">
+                                  {/* Coluna 1: Posição */}
+                                  <td className="py-3 px-3 text-center font-bold font-mono">
+                                    {idx === 0 ? (
+                                      <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-[0_0_8px_rgba(245,158,11,0.3)]">
+                                        🥇
+                                      </span>
+                                    ) : idx === 1 ? (
+                                      <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-300/20 text-slate-200 border border-slate-300/40">
+                                        🥈
+                                      </span>
+                                    ) : idx === 2 ? (
+                                      <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-700/20 text-amber-400 border border-amber-700/40">
+                                        🥉
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-500">{idx + 1}º</span>
+                                    )}
+                                  </td>
+
+                                  {/* Coluna 2: Avatar & Nome */}
+                                  <td className="py-3 px-4">
+                                    <div className="flex items-center gap-3">
+                                      {m.avatarUrl ? (
+                                        <img
+                                          src={m.avatarUrl}
+                                          alt={m.nome}
+                                          className="w-8 h-8 rounded-full ring-1 ring-blue-500/40 object-cover shrink-0"
+                                        />
+                                      ) : (
+                                        <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0">
+                                          <UserCheck className="w-4 h-4 text-slate-400" />
+                                        </div>
+                                      )}
+                                      <div>
+                                        <span className="font-bold text-white text-xs block">{m.nome}</span>
+                                        <span className="text-[10px] font-mono text-slate-500">{m.steamHex}</span>
+                                      </div>
+                                    </div>
+                                  </td>
+
+                                  {/* Coluna 3: Total */}
+                                  <td className="py-3 px-3 text-center">
+                                    <span className="px-2.5 py-1 rounded-md bg-blue-600/20 text-blue-300 font-black font-mono border border-blue-500/30 text-xs">
+                                      {totalPeriod}
+                                    </span>
+                                  </td>
+
+                                  {/* Coluna 4: Óleo */}
+                                  <td className="py-3 px-3 text-center font-mono font-bold text-amber-300">
+                                    {m.totalOleo}
+                                  </td>
+
+                                  {/* Coluna 5: Tuning */}
+                                  <td className="py-3 px-3 text-center font-mono font-bold text-blue-300">
+                                    {m.totalTuning}
+                                  </td>
+
+                                  {/* Coluna 6: Retífica */}
+                                  <td className="py-3 px-3 text-center font-mono font-bold text-purple-300">
+                                    {m.totalRetifica}
+                                  </td>
+
+                                  {/* Coluna 7: Remoção */}
+                                  <td className="py-3 px-3 text-center font-mono font-bold text-cyan-300">
+                                    {m.totalExtra}
+                                  </td>
+
+                                  {/* Coluna 8: Participação */}
+                                  <td className="py-3 px-4 text-right">
+                                    <div className="flex items-center justify-end gap-2">
+                                      <span className="font-mono text-xs text-slate-400 font-bold">{sharePct}%</span>
+                                      <div className="w-16 h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                                        <div className="h-full bg-blue-500 rounded-full" style={{ width: `${sharePct}%` }} />
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ========================================================================= */}
+              {/* ABA 3: FICHAS & LOGS DETALHADOS */}
+              {/* ========================================================================= */}
+              {selectedTab === 'logs' && (
+                <div className="space-y-4">
+                  {/* Busca Rápida nos Logs */}
+                  <div className="flex items-center gap-3">
+                    <div className="relative flex-1">
+                      <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        placeholder="Filtrar por placa, modelo, serviço ou mecânico..."
+                        className="w-full pl-9 pr-4 py-2 bg-slate-900 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Tabela de Logs */}
+                  <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950/60">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-900/90 text-slate-400 uppercase tracking-wider font-mono text-[10px] border-b border-slate-800">
+                          <tr>
+                            <th className="py-2.5 px-3">Data/Hora</th>
+                            <th className="py-2.5 px-3">Mecânico</th>
+                            <th className="py-2.5 px-3">Placa</th>
+                            <th className="py-2.5 px-3">Veículo</th>
+                            <th className="py-2.5 px-3">Serviço</th>
+                            <th className="py-2.5 px-3">IA / Latência</th>
+                            <th className="py-2.5 px-3 text-center">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                          {filteredLogs.length === 0 ? (
+                            <tr>
+                              <td colSpan={7} className="py-6 text-center text-slate-500">
+                                Nenhum registro encontrado.
+                              </td>
+                            </tr>
+                          ) : (
+                            filteredLogs.map((log) => (
+                              <tr key={log.id} className="hover:bg-slate-900/40 transition-colors font-mono text-[11px]">
+                                <td className="py-2.5 px-3 text-slate-400">{log.dateTimeStr}</td>
+                                <td className="py-2.5 px-3 font-semibold text-slate-200">{log.mechanicName || 'Anônimo'}</td>
+                                <td className="py-2.5 px-3 font-bold text-amber-300">{log.placa}</td>
+                                <td className="py-2.5 px-3 text-white truncate max-w-[130px]" title={log.modelo}>{log.modelo}</td>
+                                <td className="py-2.5 px-3 text-slate-300 truncate max-w-[150px]" title={log.servico}>{log.servico}</td>
+                                <td className="py-2.5 px-3 text-slate-400">
+                                  <span>{log.model.replace('gemini-', '').replace('cloudflare-', '')}</span>
+                                  <span className="text-blue-400 ml-1.5 font-bold">({log.durationSec}s)</span>
+                                </td>
+                                <td className="py-2.5 px-3 text-center">
+                                  {log.success ? (
+                                    <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
+                                      OK
+                                    </span>
+                                  ) : (
+                                    <span className="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 text-[10px] font-bold">
+                                      ERRO
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ========================================================================= */}
+              {/* ABA 4: QUADRO DE FUNCIONÁRIOS (Sincronizado da API Netlify) */}
+              {/* ========================================================================= */}
+              {selectedTab === 'funcionarios' && (
+                <div className="space-y-4">
+                  {/* Barra de Ação & Sincronização */}
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-900/60 p-4 rounded-xl border border-slate-800/80">
+                    <div>
+                      <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                        <Users className="w-4 h-4 text-emerald-400" />
+                        Quadro Oficial de Mecânicos Autorizados
+                      </h4>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        Base sincronizada com a API externa da Mecânica BRP ({adminData?.funcionarios.length || 0} membros ativos)
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 w-full sm:w-auto">
+                      <button
+                        type="button"
+                        onClick={handleManualSyncMembers}
+                        disabled={isSyncingMembers}
+                        className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/20 transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        <RotateCw className={`w-3.5 h-3.5 ${isSyncingMembers ? 'animate-spin' : ''}`} />
+                        <span>{isSyncingMembers ? 'Sincronizando...' : 'Sincronizar com API Netlify'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Campo de Busca nos Membros */}
+                  <div className="relative">
+                    <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      placeholder="Filtrar placa, veículo ou serviço..."
-                      className="w-full bg-[#080d1a] border border-[#1e293b] rounded-lg pl-9 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono"
+                      value={funcSearch}
+                      onChange={(e) => setFuncSearch(e.target.value)}
+                      placeholder="Buscar funcionário por nome ou Steam Hex..."
+                      className="w-full pl-9 pr-4 py-2 bg-slate-900 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
                     />
                   </div>
-                </div>
 
-                {/* Tabela Responsiva */}
-                <div className="overflow-x-auto rounded-lg border border-[#1e293b]">
-                  <table className="w-full text-left text-xs text-slate-300">
-                    <thead className="bg-[#080d1a] text-slate-400 uppercase font-mono text-[11px] border-b border-[#1e293b]">
-                      <tr>
-                        <th className="py-2.5 px-3">Horário</th>
-                        <th className="py-2.5 px-3">Placa</th>
-                        <th className="py-2.5 px-3">Veículo</th>
-                        <th className="py-2.5 px-3">Serviço Realizado</th>
-                        <th className="py-2.5 px-3">Provedor IA</th>
-                        <th className="py-2.5 px-3 text-right">Latência</th>
-                        <th className="py-2.5 px-3 text-center">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#1e293b] font-mono">
-                      {filteredLogs.length === 0 ? (
-                        <tr>
-                          <td colSpan={7} className="py-6 text-center text-slate-500">
-                            Nenhum registro encontrado.
-                          </td>
-                        </tr>
-                      ) : (
-                        filteredLogs.map((log) => (
-                          <tr key={log.id} className="hover:bg-[#131b2e] transition-colors">
-                            <td className="py-2.5 px-3 text-slate-400 whitespace-nowrap">
-                              {log.dateTimeStr}
-                            </td>
-                            <td className="py-2.5 px-3 font-bold text-amber-300 whitespace-nowrap">
-                              {log.placa}
-                            </td>
-                            <td className="py-2.5 px-3 text-white whitespace-nowrap font-sans font-medium">
-                              {log.modelo}
-                            </td>
-                            <td className="py-2.5 px-3 text-slate-300 max-w-xs truncate font-sans">
-                              {log.servico}
-                            </td>
-                            <td className="py-2.5 px-3 text-slate-400 whitespace-nowrap text-[11px]">
-                              {log.model.includes('cloudflare') ? (
-                                <span className="text-purple-300">Cloudflare Llama</span>
-                              ) : (
-                                <span className="text-blue-300">Gemini 3.5 Lite</span>
-                              )}
-                            </td>
-                            <td className="py-2.5 px-3 text-right text-slate-400 whitespace-nowrap">
-                              {log.durationSec}s
-                            </td>
-                            <td className="py-2.5 px-3 text-center whitespace-nowrap">
-                              {log.success ? (
-                                <span className="inline-flex items-center gap-1 text-emerald-400 text-[11px]">
-                                  <CheckCircle2 className="w-3.5 h-3.5" /> OK
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 text-rose-400 text-[11px]">
-                                  <AlertTriangle className="w-3.5 h-3.5" /> Falha
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+                  {/* Grid de Membros Autorizados */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[50vh] overflow-y-auto pr-1">
+                    {filteredFuncionarios.length === 0 ? (
+                      <div className="col-span-full py-8 text-center text-slate-500 text-xs">
+                        Nenhum funcionário encontrado com o termo pesquisado.
+                      </div>
+                    ) : (
+                      filteredFuncionarios.map((func) => (
+                        <div
+                          key={func.steamHex}
+                          className="p-3 rounded-xl bg-slate-900/50 border border-slate-800/80 flex items-center justify-between gap-3 hover:border-slate-700 transition-colors"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            {func.avatarUrl ? (
+                              <img
+                                src={func.avatarUrl}
+                                alt={func.nome}
+                                className="w-8 h-8 rounded-full ring-1 ring-emerald-500/40 object-cover shrink-0"
+                              />
+                            ) : (
+                              <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0">
+                                <UserCheck className="w-4 h-4 text-emerald-400" />
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <span className="font-bold text-white text-xs block truncate" title={func.nome}>
+                                {func.nome}
+                              </span>
+                              <span className="text-[10px] font-mono text-slate-400 block truncate" title={func.steamHex}>
+                                {func.steamHex}
+                              </span>
+                            </div>
+                          </div>
+
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
+                            ATIVO
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
-          ) : (
-            <div className="py-12 text-center text-slate-400">Carregando dados da VPS...</div>
-          )}
-        </div>
+          </div>
+        )}
       </motion.div>
     </div>
   );
