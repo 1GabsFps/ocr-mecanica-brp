@@ -91,6 +91,8 @@ export function useServiceHistory() {
     return itemId;
   }, []);
 
+  const discordDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const updateCurrentServiceDetails = useCallback((newServico: string, fullData: VehicleData) => {
     const currentId = activeItemIdRef.current;
     if (!currentId) return;
@@ -149,18 +151,11 @@ export function useServiceHistory() {
       return updated;
     });
 
-    // EFEITO COLATERAL: Se já tiver o messageId, atualiza o Discord. Senão, guarda na fila pendente.
     if (targetPayload) {
-      if (targetMessageId) {
-        updateDiscordMessage(targetMessageId, targetPayload);
-      } else {
-        pendingDiscordUpdatesRef.current.set(currentId, targetPayload);
-      }
-
-      // Sincronização em Segundo Plano com o Banco de Dados SQLite VPS
+      // 1. Sincronização IMEDIATA com o Banco de Dados SQLite VPS (0ms)
       const s = newServico.toLowerCase();
       let calculatedMode = 'oleo';
-      if (s.includes('retifica') || s.includes('retífica') || s.includes('bloco') || s.includes('pist') || s.includes('biela') || s.includes('cabeçote') || s.includes('cabecote')) {
+      if (s.includes('retifica') || s.includes('retífica') || s.includes('bloco') || s.includes('pist') || s.includes('biela') || s.includes('cabeçote') || s.includes('cabecote') || s.includes('virabrequim') || s.includes('cilindro') || s.includes('turbina')) {
         calculatedMode = 'retifica';
       } else if (s.includes('performance') || s.includes('tuning') || s.includes('freio') || s.includes('pneu') || s.includes('suspens') || s.includes('dire')) {
         calculatedMode = 'tuning';
@@ -174,11 +169,26 @@ export function useServiceHistory() {
         body: JSON.stringify({
           placa: targetPayload.placa,
           servico: newServico,
-          serviceMode: calculatedMode
-        })
+          serviceMode: calculatedMode,
+          mechanicSteamHex: fullData.mechanicSteamHex,
+          mechanicName: fullData.mechanicName,
+        }),
       }).catch(() => {
         // Falhas de rede de telemetria não bloqueiam a UI
       });
+
+      // 2. Sincronização com Discord (com debounce inteligente de 1.2s para evitar Rate Limit 429)
+      if (discordDebounceTimerRef.current) {
+        clearTimeout(discordDebounceTimerRef.current);
+      }
+
+      discordDebounceTimerRef.current = setTimeout(() => {
+        if (targetMessageId) {
+          updateDiscordMessage(targetMessageId, targetPayload);
+        } else {
+          pendingDiscordUpdatesRef.current.set(currentId, targetPayload);
+        }
+      }, 1200);
     }
   }, []);
 
@@ -205,4 +215,3 @@ export function useServiceHistory() {
     copyImageToClipboard,
   };
 }
-
