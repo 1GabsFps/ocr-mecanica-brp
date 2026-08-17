@@ -381,15 +381,22 @@ function parseServiceMode(currentServico: string): ServiceMode {
     s.includes('pistao') ||
     s.includes('biela') ||
     s.includes('cabeçote') ||
-    s.includes('cabecote')
+    s.includes('cabecote') ||
+    s.includes('virabrequim') ||
+    s.includes('turbina')
   ) {
     return 'retifica';
   }
   if (
-    currentServico.includes('Freio') ||
-    currentServico.includes('Pneus') ||
-    currentServico.includes('Suspensão') ||
-    currentServico.includes('Direção')
+    s.includes('performance') ||
+    s.includes('tuning') ||
+    s.includes('freio') ||
+    s.includes('pneu') ||
+    s.includes('suspens') ||
+    s.includes('dire') ||
+    s.includes('slick') ||
+    s.includes('drift') ||
+    s.includes('ceramic')
   ) {
     return 'tuning';
   }
@@ -424,6 +431,12 @@ function parseRetificaParts(currentServico: string): SelectedRetificaParts {
     }
   }
 
+  // Remove menções de "bloco X cilindros" ou "bloco do motor" para não confundir com o chip avulso "Cilindros"
+  const sWithoutBloco = s
+    .replace(/bloco\s+\d+\s+cilindros/g, '')
+    .replace(/bloco\s+do\s+motor/g, '');
+  const hasCilindrosAvulso = /\bcilindros?\b/i.test(sWithoutBloco);
+
   return {
     bloco: s.includes('bloco'),
     blocoCilindros: numCilindros,
@@ -452,7 +465,7 @@ function parseRetificaParts(currentServico: string): SelectedRetificaParts {
         ? 'cliente'
         : 'mec',
     virabrequim: s.includes('virabrequim'),
-    cilindros: s.includes('cilindro') || s.includes('cilindros'),
+    cilindros: hasCilindrosAvulso,
     turbina: s.includes('turbina'),
   };
 }
