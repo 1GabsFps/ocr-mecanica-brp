@@ -60,13 +60,25 @@ export function useDailyMetrics() {
       placa?: string,
       modelo?: string,
       servico = 'Troca de óleo e filtro',
-      serviceMode = 'oleo'
+      serviceMode = 'oleo',
+      mechanicSteamHex?: string,
+      mechanicName?: string
     ) => {
       // 1. Grava localmente como backup imediato
       recordOcrTelemetry(success, durationMs, model, placa, modelo);
 
       // 2. Envia para a VPS (Docker Telemetry Service) para somar no painel de todos
-      await sendServerTelemetry(success, durationMs, model, placa, modelo, servico, serviceMode);
+      await sendServerTelemetry(
+        success,
+        durationMs,
+        model,
+        placa,
+        modelo,
+        servico,
+        serviceMode,
+        mechanicSteamHex,
+        mechanicName
+      );
 
       // 3. Atualiza os dados imediatamente na tela
       refreshMetrics();
@@ -80,4 +92,3 @@ export function useDailyMetrics() {
     refreshMetrics,
   };
 }
-
