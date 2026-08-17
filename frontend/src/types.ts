@@ -40,6 +40,8 @@ export interface VehicleData {
   ipva?: string;
   multas?: string;
   rawText?: string;
+  mechanicSteamHex?: string;
+  mechanicName?: string;
 }
 
 export interface ServiceHistoryItem {
@@ -56,10 +58,4 @@ export interface OcrProgress {
   status: string;
   progress: number;
   stage: 'idle' | 'loading_worker' | 'preprocessing' | 'recognizing' | 'projecting' | 'complete' | 'error';
-}
-
-export interface ZoomState {
-  scale: number;
-  positionX: number;
-  positionY: number;
 }
