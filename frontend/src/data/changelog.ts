@@ -12,12 +12,45 @@ export interface ChangelogRelease {
   items: ChangelogItem[];
 }
 
-export const CURRENT_APP_VERSION = '2.6.0';
+export const CURRENT_APP_VERSION = '2.7.0';
 
 export const CHANGELOG_DATA: ChangelogRelease[] = [
   {
-    version: '2.6.0',
+    version: '2.7.0',
     tag: 'Atual',
+    date: '17/08/2026',
+    title: 'Autenticação Steam Oficial, Quadro da Oficina e Otimizações Visuais',
+    items: [
+      {
+        title: 'Login Oficial com a Conta Steam',
+        description: 'Agora o leitor conta com autenticação direta pela sua conta Steam, identificando automaticamente o mecânico responsável em cada atendimento.',
+        type: 'feature',
+      },
+      {
+        title: 'Acesso Integrado ao Quadro da Mecânica',
+        description: 'A ferramenta é sincronizada com o quadro oficial da oficina, liberando o leitor OCR exclusivamente para os membros cadastrados.',
+        type: 'feature',
+      },
+      {
+        title: 'Sessão Conectada por 30 Dias',
+        description: 'Faça login com a sua Steam uma única vez e permaneça conectado durante todo o mês no navegador sem precisar refazer login a cada turno.',
+        type: 'improvement',
+      },
+      {
+        title: 'Identificação do Mecânico na Ficha',
+        description: 'Seu nome e perfil são vinculados com precisão a cada ficha extraída e a cada troca de serviço realizada na ferramenta.',
+        type: 'improvement',
+      },
+      {
+        title: 'Gráfico e Interface Aprimorados',
+        description: 'Curva de desempenho de 24 horas calibrada com marcadores fixos de horário e visualização fluida sem cortes no topo.',
+        type: 'performance',
+      },
+    ],
+  },
+  {
+    version: '2.6.0',
+    tag: 'Anterior',
     date: '17/08/2026',
     title: 'Atalhos de Teclado, Modo PWA Instalável e Otimizações de Alta Velocidade',
     items: [
