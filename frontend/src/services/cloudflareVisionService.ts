@@ -2,12 +2,6 @@ import { VehicleData } from '../types';
 import { formatPlate, formatOwner, formatModel } from './ocrService';
 import { compressImageForAi } from '../utils/imagePreprocessing';
 
-export const CLOUDFLARE_ACCOUNT_ID =
-  (import.meta.env.VITE_CLOUDFLARE_ACCOUNT_ID as string) || '5662e82e2101cdb59a1351361b9c4dbd';
-
-export const CLOUDFLARE_API_TOKEN =
-  (import.meta.env.VITE_CLOUDFLARE_API_TOKEN as string) || 'cfut_Er2FS7dLJ9XC2yWlfASdvfqe6CLQvcr7yRGsCg6Yc6e1039e';
-
 const CLOUDFLARE_VISION_MODEL = '@cf/meta/llama-3.2-11b-vision-instruct';
 
 const SYSTEM_PROMPT = `Você é um extrator de altíssima precisão especialista em HUDs de oficinas mecânicas do GTA RP / FiveM.
@@ -30,16 +24,12 @@ function base64ToUint8Array(base64: string): number[] {
 }
 
 /**
- * Extrai dados da imagem utilizando a API Cloudflare Workers AI (Llama 3.2 11B Vision)
+ * Extrai dados da imagem utilizando a API Cloudflare Workers AI através do proxy Nginx seguro (sem expor tokens no frontend).
  */
 export async function extractWithCloudflare(
   imageSource: string,
   onProgress?: (modelName: string, modelDisplay: string) => void
 ): Promise<VehicleData> {
-  if (!CLOUDFLARE_ACCOUNT_ID || !CLOUDFLARE_API_TOKEN) {
-    throw new Error('Credenciais da Cloudflare Workers AI não configuradas.');
-  }
-
   if (onProgress) {
     onProgress(CLOUDFLARE_VISION_MODEL, 'Cloudflare Llama 3.2 Vision');
   }
@@ -48,13 +38,25 @@ export async function extractWithCloudflare(
   const compressed = await compressImageForAi(imageSource, 1600, 0.95, 'jpeg');
   const imageBytes = base64ToUint8Array(compressed.base64Data);
 
+  const envAccountId = import.meta.env.VITE_CLOUDFLARE_ACCOUNT_ID as string;
+  const envToken = import.meta.env.VITE_CLOUDFLARE_API_TOKEN as string;
+
   const isLocalhost =
     typeof window !== 'undefined' &&
     (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
-  const url = isLocalhost
-    ? `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/run/${CLOUDFLARE_VISION_MODEL}`
+  // Em localhost pode usar chave de .env se existir; em produção usa o proxy seguro /api/cloudflare-ai/
+  const url = isLocalhost && envAccountId
+    ? `https://api.cloudflare.com/client/v4/accounts/${envAccountId}/ai/run/${CLOUDFLARE_VISION_MODEL}`
     : `/api/cloudflare-ai/${CLOUDFLARE_VISION_MODEL}`;
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  if (isLocalhost && envToken) {
+    headers['Authorization'] = `Bearer ${envToken}`;
+  }
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s timeout
@@ -62,10 +64,7 @@ export async function extractWithCloudflare(
   try {
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${CLOUDFLARE_API_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
+      headers,
       signal: controller.signal,
       body: JSON.stringify({
         image: imageBytes,
@@ -107,7 +106,6 @@ function parseCloudflareResponse(rawContent: any): VehicleData {
     try {
       parsed = JSON.parse(text);
     } catch (_) {
-      // Tenta encontrar bloco ```json ... ```
       const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
       if (codeBlockMatch) {
         try {
@@ -115,7 +113,6 @@ function parseCloudflareResponse(rawContent: any): VehicleData {
         } catch (_) {}
       }
 
-      // Tenta capturar qualquer objeto JSON { ... }
       if (!parsed || typeof parsed !== 'object' || !parsed.placa) {
         const jsonMatches = [...text.matchAll(/\{[\s\S]*?\}/g)];
         for (let i = jsonMatches.length - 1; i >= 0; i--) {
