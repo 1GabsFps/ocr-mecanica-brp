@@ -3,6 +3,7 @@ import sqlite3
 import time
 import os
 import sys
+import base64
 import secrets
 import threading
 import datetime
@@ -14,21 +15,54 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 DB_PATH = os.environ.get('DB_PATH', '/app/data/telemetry.db')
 ADMIN_SECRET = os.environ.get('ADMIN_SECRET', 'brpmecadm')
 STEAM_API_KEY = os.environ.get('STEAM_API_KEY', 'EEE3CB2D387EF9F6222A213F15CCDBA9')
-NETLIFY_API_URL = os.environ.get('NETLIFY_API_URL', 'https://mecanicabrp1.netlify.app/api/funcionarios')
+NETLIFY_API_URL = os.environ.get('NETLIFY_API_URL', 'https://mecanica.neco.lat/api/funcionarios') if os.environ.get('NETLIFY_API_URL') else 'https://mecanicabrp1.netlify.app/api/funcionarios'
 NETLIFY_API_KEY = os.environ.get('NETLIFY_API_KEY', 'Mecanica_API_2026_X8k29Pz71')
 APP_BASE_URL = os.environ.get('APP_BASE_URL', 'https://mecanica.neco.lat')
+DISCORD_WEBHOOK_URL = os.environ.get(
+    'DISCORD_WEBHOOK_URL',
+    'https://canary.discord.com/api/webhooks/1537479214041800766/70lWLdEwqV736ZhRG2ugpTuMHIj8QkFW7mrUkbJGdKAid_NoVddzqfu_UeAV6sZwwfRz'
+)
 
 BRT_TZ = datetime.timezone(datetime.timedelta(hours=-3))
 
+FAILED_ADMIN_ATTEMPTS = {}
+ATTEMPTS_LOCK = threading.Lock()
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_WINDOW_SECONDS = 900
+
+def check_ip_rate_limit(ip: str):
+    now = time.time()
+    with ATTEMPTS_LOCK:
+        if ip not in FAILED_ADMIN_ATTEMPTS:
+            return True, 0
+        
+        recent = [t for t in FAILED_ADMIN_ATTEMPTS[ip] if now - t < LOCKOUT_WINDOW_SECONDS]
+        FAILED_ADMIN_ATTEMPTS[ip] = recent
+        
+        if len(recent) >= MAX_FAILED_ATTEMPTS:
+            oldest = min(recent)
+            remaining = int(LOCKOUT_WINDOW_SECONDS - (now - oldest))
+            return False, max(remaining, 1)
+        return True, 0
+
+def record_failed_attempt(ip: str):
+    now = time.time()
+    with ATTEMPTS_LOCK:
+        if ip not in FAILED_ADMIN_ATTEMPTS:
+            FAILED_ADMIN_ATTEMPTS[ip] = []
+        FAILED_ADMIN_ATTEMPTS[ip].append(now)
+
+def clear_failed_attempts(ip: str):
+    with ATTEMPTS_LOCK:
+        FAILED_ADMIN_ATTEMPTS.pop(ip, None)
+
 def safe_log(msg: str):
-    """Gera log seguro sem falhar em consoles cp1252/Windows."""
     try:
         print(f"[{datetime.datetime.now(BRT_TZ).strftime('%Y-%m-%d %H:%M:%S')}] {msg}")
     except Exception:
         pass
 
 def get_operational_day_start_ms():
-    """Retorna o timestamp (ms) do início do turno operacional atual (03:00 AM no Horário de Brasília)."""
     now_brt = datetime.datetime.now(BRT_TZ)
     if now_brt.hour < 3:
         start_brt = now_brt.replace(hour=3, minute=0, second=0, microsecond=0) - datetime.timedelta(days=1)
@@ -48,7 +82,6 @@ def init_db():
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
-        # Tabela de Extrações OCR / Serviços
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS extractions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,7 +99,6 @@ def init_db():
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON extractions(timestamp)')
 
-        # Migração segura para colunas novas caso a tabela já existisse
         cursor.execute('PRAGMA table_info(extractions)')
         columns = [row[1] for row in cursor.fetchall()]
         if 'servico' not in columns:
@@ -80,7 +112,6 @@ def init_db():
 
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_mechanic_hex ON extractions(mechanic_steam_hex)')
 
-        # Tabela de Funcionários Autorizados (Sincronizada da API Netlify)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS funcionarios (
                 steam_hex TEXT PRIMARY KEY,
@@ -91,7 +122,6 @@ def init_db():
             )
         ''')
 
-        # Tabela de Sessões de Login Steam (30 dias)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS sessions (
                 token TEXT PRIMARY KEY,
@@ -106,13 +136,12 @@ def init_db():
         conn.commit()
 
 def sync_funcionarios_from_api():
-    """Sincroniza o quadro de funcionários consumindo a API externa Netlify."""
     try:
         req = urllib.request.Request(
             NETLIFY_API_URL,
             headers={
                 'X-API-Key': NETLIFY_API_KEY,
-                'User-Agent': 'MecBRP-OCR/2.6 (Ubuntu VPS Sync Daemon)'
+                'User-Agent': 'MecBRP-OCR/2.7 (Ubuntu VPS Sync Daemon)'
             }
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -134,7 +163,6 @@ def sync_funcionarios_from_api():
                     if not raw_hex:
                         continue
                     
-                    # Normaliza o steamHex garantindo o prefixo 'steam:' em minusculas
                     clean_hex = raw_hex.lower()
                     if not clean_hex.startswith('steam:'):
                         clean_hex = f"steam:{clean_hex}"
@@ -155,10 +183,9 @@ def sync_funcionarios_from_api():
         return False, 0
 
 def fetch_steam_player_summary(steam_id_64: str):
-    """Consulta a Steam Web API para buscar nome e avatar do perfil."""
     try:
         url = f"https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key={STEAM_API_KEY}&steamids={steam_id_64}"
-        req = urllib.request.Request(url, headers={'User-Agent': 'MecBRP-OCR/2.6'})
+        req = urllib.request.Request(url, headers={'User-Agent': 'MecBRP-OCR/2.7'})
         with urllib.request.urlopen(req, timeout=6) as resp:
             if resp.status == 200:
                 data = json.loads(resp.read().decode('utf-8'))
@@ -169,8 +196,7 @@ def fetch_steam_player_summary(steam_id_64: str):
         safe_log(f"[Steam API] Erro ao buscar player summary: {e}")
     return None
 
-def verify_steam_openid_response(query_dict: dict) -> tuple[bool, str]:
-    """Valida a assinatura OpenID 2.0 enviando check_authentication de volta para a Steam."""
+def verify_steam_openid_response(query_dict: dict):
     try:
         check_params = {k: v[0] for k, v in query_dict.items()}
         check_params['openid.mode'] = 'check_authentication'
@@ -181,14 +207,13 @@ def verify_steam_openid_response(query_dict: dict) -> tuple[bool, str]:
             data=encoded_data,
             headers={
                 'Content-Type': 'application/x-www-form-urlencoded',
-                'User-Agent': 'MecBRP-OCR/2.6'
+                'User-Agent': 'MecBRP-OCR/2.7'
             }
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
             resp_text = resp.read().decode('utf-8')
             if 'is_valid:true' in resp_text:
                 claimed_id = check_params.get('openid.claimed_id', '')
-                # Exemplo de claimed_id: https://steamcommunity.com/openid/id/76561199235636728
                 steam_id_64 = claimed_id.split('/')[-1] if '/' in claimed_id else ''
                 return True, steam_id_64
             else:
@@ -197,9 +222,78 @@ def verify_steam_openid_response(query_dict: dict) -> tuple[bool, str]:
         safe_log(f"[OpenID] Erro na validacao de assinatura: {e}")
     return False, ''
 
+def forward_to_discord_webhook(content: str, image_bytes: bytes = None, filename: str = 'veiculo.webp'):
+    if not DISCORD_WEBHOOK_URL:
+        return False, {"error": "Discord Webhook nao configurado na VPS"}
+
+    try:
+        if image_bytes:
+            boundary = f"----WebKitFormBoundary{secrets.token_hex(16)}"
+            body_parts = []
+            
+            payload_json = json.dumps({"content": content})
+            body_parts.append(f"--{boundary}\r\n".encode('utf-8'))
+            body_parts.append(b'Content-Disposition: form-data; name="payload_json"\r\n\r\n')
+            body_parts.append(payload_json.encode('utf-8'))
+            body_parts.append(b'\r\n')
+            
+            mime = 'image/webp' if filename.endswith('.webp') else 'image/jpeg'
+            body_parts.append(f"--{boundary}\r\n".encode('utf-8'))
+            body_parts.append(f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'.encode('utf-8'))
+            body_parts.append(f'Content-Type: {mime}\r\n\r\n'.encode('utf-8'))
+            body_parts.append(image_bytes)
+            body_parts.append(b'\r\n')
+            
+            body_parts.append(f"--{boundary}--\r\n".encode('utf-8'))
+            
+            full_body = b''.join(body_parts)
+            headers = {
+                'Content-Type': f'multipart/form-data; boundary={boundary}',
+                'User-Agent': 'MecBRP-Server/2.7'
+            }
+            req = urllib.request.Request(f"{DISCORD_WEBHOOK_URL}?wait=true", data=full_body, headers=headers, method='POST')
+        else:
+            json_body = json.dumps({"content": content}).encode('utf-8')
+            headers = {
+                'Content-Type': 'application/json',
+                'User-Agent': 'MecBRP-Server/2.7'
+            }
+            req = urllib.request.Request(DISCORD_WEBHOOK_URL, data=json_body, headers=headers, method='POST')
+
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            raw_body = resp.read().decode('utf-8').strip()
+            resp_data = json.loads(raw_body) if raw_body else {}
+            attachment = resp_data.get('attachments', [{}])[0] if resp_data.get('attachments') else {}
+            return True, {
+                "url": attachment.get('url'),
+                "proxyUrl": attachment.get('proxy_url'),
+                "filename": attachment.get('filename'),
+                "messageId": resp_data.get('id')
+            }
+    except Exception as e:
+        safe_log(f"[Discord Forward] Erro ao enviar para Discord: {e}")
+        return False, {"error": str(e)}
+
+def update_discord_webhook_message(message_id: str, content: str):
+    if not DISCORD_WEBHOOK_URL or not message_id:
+        return False, {"error": "Parametros invalidos"}
+
+    try:
+        url = f"{DISCORD_WEBHOOK_URL}/messages/{message_id}"
+        json_body = json.dumps({"content": content}).encode('utf-8')
+        headers = {
+            'Content-Type': 'application/json',
+            'User-Agent': 'MecBRP-Server/2.7'
+        }
+        req = urllib.request.Request(url, data=json_body, headers=headers, method='PATCH')
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return True, {"ok": True}
+    except Exception as e:
+        safe_log(f"[Discord Patch] Erro ao editar mensagem: {e}")
+        return False, {"error": str(e)}
+
 def background_tasks_loop():
-    """Loop continuo em background para expurgo de dados antigos e sincronizacao periodica da Netlify API."""
-    sync_interval_seconds = 1800 # Sincroniza a cada 30 minutos
+    sync_interval_seconds = 1800
     last_sync = 0
     
     while True:
@@ -225,13 +319,21 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Admin-Secret, X-Session-Token')
 
+    def _get_client_ip(self):
+        forwarded = self.headers.get('X-Forwarded-For')
+        if forwarded:
+            return forwarded.split(',')[0].strip()
+        real_ip = self.headers.get('X-Real-IP')
+        if real_ip:
+            return real_ip.strip()
+        return self.client_address[0] if self.client_address else '127.0.0.1'
+
     def do_OPTIONS(self):
         self.send_response(204)
         self._send_cors_headers()
         self.end_headers()
 
     def _get_auth_session(self):
-        """Recupera e valida a sessao do mecanico autenticado."""
         auth_header = self.headers.get('Authorization', '')
         token = ''
         if auth_header.startswith('Bearer '):
@@ -265,8 +367,8 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip('/')
         query_params = parse_qs(parsed.query)
+        client_ip = self._get_client_ip()
 
-        # 1. Rota de Inicio de Login Steam: Redireciona para steamcommunity.com
         if path.endswith('/auth/steam/login'):
             return_url = f"{APP_BASE_URL}/api/auth/steam/callback"
             openid_params = {
@@ -284,7 +386,6 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        # 2. Rota de Retorno / Callback da Steam
         if path.endswith('/auth/steam/callback'):
             is_valid, steam_id_64 = verify_steam_openid_response(query_params)
             if not is_valid or not steam_id_64:
@@ -307,7 +408,6 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                     mechanic_name = row[0]
                     avatar_url = row[1]
 
-            # Se nao encontrou no banco local, tenta sincronizar a API Netlify imediatamente (On-Demand Fallback)
             if not mechanic_name:
                 sync_funcionarios_from_api()
                 with get_db_connection() as conn:
@@ -318,14 +418,12 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                         mechanic_name = row[0]
                         avatar_url = row[1]
 
-            # Se ainda assim nao estiver na lista de membros autorizados, bloqueia o acesso
             if not mechanic_name:
                 self.send_response(302)
                 self.send_header('Location', f"{APP_BASE_URL}/#auth_error=not_authorized&steamHex={urllib.parse.quote(steam_hex)}")
                 self.end_headers()
                 return
 
-            # Busca foto do perfil via Steam Web API se nao tiver salva
             player_info = fetch_steam_player_summary(steam_id_64)
             if player_info and player_info.get('avatarfull'):
                 avatar_url = player_info.get('avatarfull')
@@ -334,7 +432,6 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                     cursor.execute('UPDATE funcionarios SET avatar_url = ? WHERE steam_hex = ?', (avatar_url, steam_hex))
                     conn.commit()
 
-            # Cria Sessao de 30 Dias para o Mecanico
             now_ms = int(time.time() * 1000)
             expires_at = now_ms + (30 * 24 * 60 * 60 * 1000)
             session_token = secrets.token_urlsafe(32)
@@ -347,7 +444,6 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 ''', (session_token, steam_hex, mechanic_name, avatar_url or '', now_ms, expires_at))
                 conn.commit()
 
-            # Redireciona para a Home autenticado
             redirect_target = (
                 f"{APP_BASE_URL}/#token={session_token}"
                 f"&nome={urllib.parse.quote(mechanic_name)}"
@@ -359,7 +455,6 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        # 3. Rota de Checagem da Sessao Ativa
         if path.endswith('/auth/me'):
             session = self._get_auth_session()
             self.send_response(200)
@@ -381,14 +476,25 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"authenticated": False}).encode('utf-8'))
             return
 
-        # 4. Painel Administrativo
         if path.endswith('/admin') or query_params.get('admin', ['0'])[0] == '1':
+            is_allowed, wait_sec = check_ip_rate_limit(client_ip)
+            if not is_allowed:
+                self.send_response(429)
+                self.send_header('Content-Type', 'application/json')
+                self._send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "error": f"Muitas tentativas incorretas. IP bloqueado temporariamente por {wait_sec // 60 + 1} minutos."
+                }).encode('utf-8'))
+                return
+
             secret_provided = (
                 query_params.get('secret', [''])[0]
                 or self.headers.get('X-Admin-Secret', '')
                 or self.headers.get('Authorization', '').replace('Bearer ', '')
             )
             if secret_provided != ADMIN_SECRET:
+                record_failed_attempt(client_ip)
                 self.send_response(401)
                 self.send_header('Content-Type', 'application/json')
                 self._send_cors_headers()
@@ -396,10 +502,10 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"error": "Acesso nao autorizado ao painel administrativo"}).encode('utf-8'))
                 return
 
+            clear_failed_attempts(client_ip)
             self._handle_admin_metrics()
             return
 
-        # 5. Endpoint Publico de Metricas Rapidas (Home)
         self._handle_public_metrics()
 
     def _handle_public_metrics(self):
@@ -460,7 +566,6 @@ class TelemetryHandler(BaseHTTPRequestHandler):
         with get_db_connection() as conn:
             cursor = conn.cursor()
 
-            # Resumo do Dia
             cursor.execute('''
                 SELECT
                     COUNT(*),
@@ -478,11 +583,9 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             avg_ms = today_row[2] if today_row else None
             min_ms = today_row[3] if today_row else None
 
-            # Resumo da Semana
             cursor.execute('SELECT COUNT(*) FROM extractions WHERE timestamp >= ?', (week_ago_ms,))
             week_row = cursor.fetchone()
 
-            # Divisao por Tipo de Servico Hoje
             cursor.execute('''
                 SELECT COALESCE(service_mode, 'oleo'), COUNT(*)
                 FROM extractions
@@ -491,7 +594,6 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             ''', (start_ms,))
             services_today = dict(cursor.fetchall())
 
-            # Divisao por IA Provedor Hoje
             cursor.execute('''
                 SELECT model, COUNT(*)
                 FROM extractions
@@ -500,7 +602,6 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             ''', (start_ms,))
             models_today = dict(cursor.fetchall())
 
-            # Horarios de Pico Hoje (24 Horas)
             cursor.execute('''
                 SELECT timestamp
                 FROM extractions
@@ -508,7 +609,6 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             ''', (start_ms,))
             timestamps_today = [r[0] for r in cursor.fetchall()]
 
-            # Ranking Consolidado de Mecanicos
             cursor.execute('''
                 SELECT 
                     COALESCE(e.mechanic_steam_hex, 'desconhecido') as hex,
@@ -544,7 +644,6 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                     "semanaFichas": r[9]
                 })
 
-            # Lista Completa de Funcionarios Cadastrados
             cursor.execute('SELECT steam_hex, nome, avatar_url, ativo, last_synced_at FROM funcionarios ORDER BY nome ASC')
             func_rows = cursor.fetchall()
             funcionarios_list = []
@@ -557,7 +656,6 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                     "lastSyncedAt": fr[4]
                 })
 
-            # Logs Recentes (Ultimos 100 Registros)
             cursor.execute('''
                 SELECT id, timestamp, success, duration_ms, model, placa, modelo, servico, service_mode, mechanic_name, mechanic_steam_hex
                 FROM extractions
@@ -566,7 +664,6 @@ class TelemetryHandler(BaseHTTPRequestHandler):
             ''')
             log_rows = cursor.fetchall()
 
-        # Montagem dos 24 horarios de pico
         hourly_counts = {h: 0 for h in range(24)}
         for ts in timestamps_today:
             dt = datetime.datetime.fromtimestamp(ts / 1000.0, tz=BRT_TZ)
@@ -625,13 +722,21 @@ class TelemetryHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip('/')
+        client_ip = self._get_client_ip()
 
         try:
             content_length = int(self.headers.get('Content-Length', 0))
+            if content_length > 15 * 1024 * 1024:
+                self.send_response(413)
+                self.send_header('Content-Type', 'application/json')
+                self._send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "Payload excessivamente grande"}).encode('utf-8'))
+                return
+
             body = self.rfile.read(content_length) if content_length > 0 else b'{}'
             data = json.loads(body.decode('utf-8')) if body else {}
 
-            # Rota de Logout
             if path.endswith('/auth/logout'):
                 session = self._get_auth_session()
                 if session:
@@ -646,14 +751,68 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"ok": True}).encode('utf-8'))
                 return
 
-            # Sincronizacao Manual Forcada de Funcionarios (Admin)
+            if path.endswith('/discord/upload'):
+                content = str(data.get('content', ''))[:2000]
+                image_data = data.get('image')
+                filename = str(data.get('filename', 'veiculo.webp'))[:64]
+                
+                image_bytes = None
+                if image_data and isinstance(image_data, str):
+                    if ',' in image_data:
+                        image_data = image_data.split(',', 1)[1]
+                    try:
+                        image_bytes = base64.b64decode(image_data)
+                    except Exception:
+                        image_bytes = None
+
+                ok, result = forward_to_discord_webhook(content, image_bytes, filename)
+                self.send_response(200 if ok else 502)
+                self.send_header('Content-Type', 'application/json')
+                self._send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps(result).encode('utf-8'))
+                return
+
+            if path.endswith('/discord/update'):
+                message_id = str(data.get('messageId', ''))[:64]
+                content = str(data.get('content', ''))[:2000]
+                ok, result = update_discord_webhook_message(message_id, content)
+                self.send_response(200 if ok else 502)
+                self.send_header('Content-Type', 'application/json')
+                self._send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps(result).encode('utf-8'))
+                return
+
+            if path.endswith('/discord/alert'):
+                content = str(data.get('content', ''))[:2000]
+                ok, result = forward_to_discord_webhook(content)
+                self.send_response(200 if ok else 502)
+                self.send_header('Content-Type', 'application/json')
+                self._send_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps(result).encode('utf-8'))
+                return
+
             if path.endswith('/admin/sync-funcionarios'):
+                is_allowed, wait_sec = check_ip_rate_limit(client_ip)
+                if not is_allowed:
+                    self.send_response(429)
+                    self.send_header('Content-Type', 'application/json')
+                    self._send_cors_headers()
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "error": f"Muitas tentativas incorretas. IP bloqueado temporariamente por {wait_sec // 60 + 1} minutos."
+                    }).encode('utf-8'))
+                    return
+
                 secret_provided = (
                     data.get('secret', '')
                     or self.headers.get('X-Admin-Secret', '')
                     or self.headers.get('Authorization', '').replace('Bearer ', '')
                 )
                 if secret_provided != ADMIN_SECRET:
+                    record_failed_attempt(client_ip)
                     self.send_response(401)
                     self.send_header('Content-Type', 'application/json')
                     self._send_cors_headers()
@@ -661,6 +820,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                     self.wfile.write(json.dumps({"error": "Acesso nao autorizado"}).encode('utf-8'))
                     return
 
+                clear_failed_attempts(client_ip)
                 ok, count = sync_funcionarios_from_api()
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
@@ -669,14 +829,11 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"success": ok, "total": count}).encode('utf-8'))
                 return
 
-            # Atualizacao de Servico Modificado pelo Mecanico
             if path.endswith('/update'):
-                servico = str(data.get('servico', ''))
-                service_mode = str(data.get('serviceMode', ''))
+                servico = str(data.get('servico', ''))[:256]
+                service_mode = str(data.get('serviceMode', ''))[:32]
                 ext_id = data.get('id')
-                placa = data.get('placa')
-                mechanic_steam_hex = data.get('mechanicSteamHex')
-                mechanic_name = data.get('mechanicName')
+                placa = str(data.get('placa', ''))[:32] if data.get('placa') else None
 
                 with get_db_connection() as conn:
                     cursor = conn.cursor()
@@ -715,17 +872,16 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 self.wfile.write(response_bytes)
                 return
 
-            # Insercao Padrao de Nova Extracao OCR
             timestamp = int(data.get('timestamp') or time.time() * 1000)
             success = 1 if data.get('success', True) else 0
             duration_ms = int(data.get('durationMs', 1400))
-            model = str(data.get('model', 'gemini-3.5-flash-lite'))
-            placa = str(data.get('placa', ''))
-            modelo = str(data.get('modelo', ''))
-            servico = str(data.get('servico', 'Troca de oleo e filtro'))
-            service_mode = str(data.get('serviceMode', 'oleo'))
-            mechanic_steam_hex = data.get('mechanicSteamHex') or ''
-            mechanic_name = data.get('mechanicName') or ''
+            model = str(data.get('model', 'gemini-3.5-flash-lite'))[:64]
+            placa = str(data.get('placa', ''))[:32]
+            modelo = str(data.get('modelo', ''))[:128]
+            servico = str(data.get('servico', 'Troca de oleo e filtro'))[:256]
+            service_mode = str(data.get('serviceMode', 'oleo'))[:32]
+            mechanic_steam_hex = str(data.get('mechanicSteamHex') or '')[:64]
+            mechanic_name = str(data.get('mechanicName') or '')[:128]
 
             with get_db_connection() as conn:
                 cursor = conn.cursor()
