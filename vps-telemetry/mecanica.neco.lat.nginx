@@ -7,13 +7,13 @@ server {
     root /home/ubuntu/MECBRP;
     index index.html;
     charset utf-8;
+    client_max_body_size 25M;
 
     include /etc/nginx/mime.types;
     default_type text/html;
 
     # Tipos MIME especiais para Tesseract WASM e modelos locais
     types {
-        application/wasm wasm;
         application/octet-stream traineddata;
     }
 
@@ -23,7 +23,7 @@ server {
     gzip_min_length 1024;
     gzip_proxied any;
     gzip_types text/plain text/css text/xml text/javascript application/x-javascript application/xml application/javascript application/json application/wasm image/svg+xml;
-    gzip_disable "MSIE [1-6]\.";
+    gzip_disable "MSIE [1-6].";
 
     # Headers de Seguranca & HSTS
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
@@ -58,7 +58,7 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        client_max_body_size 15M;
+        client_max_body_size 25M;
     }
 
     # Proxy reverso para Google Gemini com Keep-Alive persistente e baixa latencia
@@ -86,14 +86,14 @@ server {
     }
 
     # Chunks imutaveis do Vite (com hash no nome) podem ter cache longo
-    location ~* \.(?:css|js)$ {
+    location ~* .(?:css|js)$ {
         try_files $uri =404;
         expires 1y;
         access_log off;
         add_header Cache-Control "public, max-age=31536000, immutable";
     }
 
-    location ~* \.(?:ico|png|jpg|jpeg|gif|svg|woff|woff2|ttf|wasm|traineddata)$ {
+    location ~* .(?:ico|png|jpg|jpeg|gif|svg|woff|woff2|ttf|wasm|traineddata)$ {
         try_files $uri =404;
         expires 1y;
         access_log off;
