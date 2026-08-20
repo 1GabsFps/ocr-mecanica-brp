@@ -15,9 +15,9 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 DB_PATH = os.environ.get('DB_PATH', '/app/data/telemetry.db')
 ADMIN_SECRET = os.environ.get('ADMIN_SECRET', 'brpmecadm')
 STEAM_API_KEY = os.environ.get('STEAM_API_KEY', 'EEE3CB2D387EF9F6222A213F15CCDBA9')
-NETLIFY_API_URL = os.environ.get('NETLIFY_API_URL', 'https://mecanica.neco.lat/api/funcionarios') if os.environ.get('NETLIFY_API_URL') else 'https://mecanicabrp1.netlify.app/api/funcionarios'
+NETLIFY_API_URL = os.environ.get('NETLIFY_API_URL', 'https://mecanica.gbrdev.net/api/funcionarios') if os.environ.get('NETLIFY_API_URL') else 'https://mecanicabrp1.netlify.app/api/funcionarios'
 NETLIFY_API_KEY = os.environ.get('NETLIFY_API_KEY', 'Mecanica_API_2026_X8k29Pz71')
-APP_BASE_URL = os.environ.get('APP_BASE_URL', 'https://mecanica.neco.lat')
+APP_BASE_URL = os.environ.get('APP_BASE_URL', 'https://mecanica.gbrdev.net')
 DISCORD_WEBHOOK_URL = os.environ.get(
     'DISCORD_WEBHOOK_URL',
     'https://canary.discord.com/api/webhooks/1537479214041800766/70lWLdEwqV736ZhRG2ugpTuMHIj8QkFW7mrUkbJGdKAid_NoVddzqfu_UeAV6sZwwfRz'
