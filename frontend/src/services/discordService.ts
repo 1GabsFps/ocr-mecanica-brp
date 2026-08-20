@@ -137,7 +137,7 @@ export async function uploadImageToDiscord(
   metadata?: DiscordPayloadMetadata
 ): Promise<DiscordUploadResult | null> {
   try {
-    const compressed = await compressImageForAi(imageSrc, 1920, 0.90, 'webp');
+    const compressed = await compressImageForAi(imageSrc, 1600, 0.85, 'webp');
     const extension = compressed.mimeType === 'image/webp' ? 'webp' : 'jpg';
     const filename = `veiculo_${metadata?.placa || 'print'}_${Date.now()}.${extension}`;
     const content = formatDiscordContent(metadata);
