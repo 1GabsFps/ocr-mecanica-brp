@@ -726,7 +726,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
 
         try:
             content_length = int(self.headers.get('Content-Length', 0))
-            if content_length > 15 * 1024 * 1024:
+            if content_length > 25 * 1024 * 1024:
                 self.send_response(413)
                 self.send_header('Content-Type', 'application/json')
                 self._send_cors_headers()
