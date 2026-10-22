@@ -97,10 +97,10 @@ server {
 
     # Proxy reverso para Cloudflare Workers AI (Com injecao server-side do Token)
     location /api/cloudflare-ai/ {
-        proxy_pass https://api.cloudflare.com/client/v4/accounts/5662e82e2101cdb59a1351361b9c4dbd/ai/run/;
+        proxy_pass https://api.cloudflare.com/client/v4/accounts/<CLOUDFLARE_ACCOUNT_ID>/ai/run/;
         proxy_ssl_server_name on;
         proxy_set_header Host "api.cloudflare.com";
-        proxy_set_header Authorization "Bearer cfut_Er2FS7dLJ9XC2yWlfASdvfqe6CLQvcr7yRGsCg6Yc6e1039e";
+        proxy_set_header Authorization "Bearer <CLOUDFLARE_API_TOKEN>";
         proxy_set_header Content-Type "application/json";
         proxy_read_timeout 30s;
         proxy_connect_timeout 10s;
