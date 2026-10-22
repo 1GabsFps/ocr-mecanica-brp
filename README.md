@@ -182,10 +182,6 @@ ocr-mecanica-brp/
 │   ├── compare_members.py        # Validação cruzada de membros e cargos
 │   ├── Dockerfile
 │   └── mecanica.neco.lat.nginx   # Configuração de produção do Nginx com SSL e rate limit
-├── video-apresentacao/           # Suíte de apresentação animada em vídeo (Framer Motion)
-│   ├── src/                      # Cenas 1080p60 em estilo Bento Grid / Apple Keynote
-│   ├── scripts/record.mjs        # Gravação automatizada em vídeo via Playwright headless
-│   └── package.json
 ├── scripts/                      # Scripts de validação e testes adversariais
 └── README.md
 ```
@@ -228,18 +224,6 @@ O servidor iniciará escutando em `http://127.0.0.1:8002`.
 ```bash
 cd vps-telemetry
 python discord_gateway_watcher.py
-```
-
-### 5. Executando a Apresentação em Vídeo (Framer Motion)
-```bash
-cd video-apresentacao
-npm install
-
-# Visualizar interativamente no navegador
-npm run dev
-
-# Gravar automaticamente em vídeo Full HD 60 FPS
-npm run record
 ```
 
 ---
