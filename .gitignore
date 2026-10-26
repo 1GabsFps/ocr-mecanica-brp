@@ -2,10 +2,13 @@
 node_modules/
 .pnp
 .pnp.js
+video-apresentacao/node_modules/
+video-apresentacao/output/
 
 # Production & Build outputs
 dist/
 build/
+*.exe
 *.spec
 __pycache__/
 *.pyc
@@ -15,13 +18,17 @@ __pycache__/
 .env
 .env.local
 .env.*.local
+*.pem
+*.key
 
 # Tesseract data
 *.traineddata
 
 # Backups and temp files
 backups/
+scratch/
 *.log
 .gemini/
 .DS_Store
 Thumbs.db
+test_*.png

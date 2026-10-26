@@ -44,11 +44,13 @@ def load_dotenv():
 load_dotenv()
 
 DB_PATH = os.environ.get('DB_PATH', '/app/data/telemetry.db')
-ADMIN_SECRET = os.environ.get('ADMIN_SECRET')
-STEAM_API_KEY = os.environ.get('STEAM_API_KEY')
+ADMIN_SECRET = os.environ.get('ADMIN_SECRET', '')
+STEAM_API_KEY = os.environ.get('STEAM_API_KEY', '')
+NETLIFY_API_URL = os.environ.get('NETLIFY_API_URL', 'https://mecanica.gbrdev.net/api/funcionarios') if os.environ.get('NETLIFY_API_URL') else 'https://mecanicabrp1.netlify.app/api/funcionarios'
+NETLIFY_API_KEY = os.environ.get('NETLIFY_API_KEY', '')
 APP_BASE_URL = os.environ.get('APP_BASE_URL', 'https://mecanica.gbrdev.net')
-DISCORD_WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL')
-DISCORD_TOKEN = os.environ.get('DISCORD_TOKEN')
+DISCORD_WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL', '')
+DISCORD_TOKEN = os.environ.get('DISCORD_TOKEN', '')
 ALLOWED_ORIGINS = [
     o.strip() for o in os.environ.get(
         'ALLOWED_ORIGINS',
@@ -2126,7 +2128,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                 or self.headers.get('X-Admin-Secret', '')
                 or self.headers.get('Authorization', '').replace('Bearer ', '')
             )
-            if secret_provided != ADMIN_SECRET:
+            if not ADMIN_SECRET or secret_provided != ADMIN_SECRET:
                 record_failed_attempt(client_ip)
                 self.send_response(401)
                 self.send_header('Content-Type', 'application/json')
@@ -2616,7 +2618,7 @@ class TelemetryHandler(BaseHTTPRequestHandler):
                     or self.headers.get('X-Admin-Secret', '')
                     or self.headers.get('Authorization', '').replace('Bearer ', '')
                 )
-                if secret_provided != ADMIN_SECRET:
+                if not ADMIN_SECRET or secret_provided != ADMIN_SECRET:
                     record_failed_attempt(client_ip)
                     self.send_response(401)
                     self.send_header('Content-Type', 'application/json')

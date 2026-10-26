@@ -14,13 +14,20 @@ export interface UseClipboardImageReturn {
   resetImage: () => void;
 }
 
-export function useClipboardImage(autoPasteEnabled = false): UseClipboardImageReturn {
+export function useClipboardImage(
+  autoPasteEnabled = false,
+  onImageLoaded?: (src: string) => void
+): UseClipboardImageReturn {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
   const lastClipboardSignatureRef = useRef<string | null>(null);
+  const onImageLoadedRef = useRef(onImageLoaded);
+  useEffect(() => {
+    onImageLoadedRef.current = onImageLoaded;
+  }, [onImageLoaded]);
 
   const processFile = useCallback((file: File) => {
     if (!file.type.startsWith('image/')) {
@@ -37,6 +44,7 @@ export function useClipboardImage(autoPasteEnabled = false): UseClipboardImageRe
       if (result) {
         // Forçar atualização substituindo a imagem imediatamente
         setImageSrc(result);
+        onImageLoadedRef.current?.(result);
       }
     };
     reader.onerror = () => {
